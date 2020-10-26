@@ -1,0 +1,4 @@
+This repo is used as a place to discuss adding a concept of exception 
+groups (also known as multi-errors) to Python 3.10. Checkout Issues
+for more information.
+
