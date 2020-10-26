@@ -1,33 +1,33 @@
-### Disclaimer
+# Introducing try..except* syntax
 
-* I'm going to be using the `ExceptionGroup` name in this issue, even
-  though there are other alternatives, e.g. `AggregateException`. Naming of the
-  "exception group" object is outside of the scope of this issue.
+## Disclaimer
 
-* This issue is primarily focused on discussing the new syntax modification
-  proposal for the `try..except` construct, shortly called "except*".
+* We use the `ExceptionGroup` name herein, even though there
+  are other alternatives, e.g. `AggregateException`. Naming of the
+  "exception group" object is out of scope of this proposal.
 
-* I use the term "naked" exception for regular Python exceptions
-  **not wrapped** in an ExceptionGroup. E.g. a regular `ValueError`
+* We use the term "naked" exception for regular Python exceptions
+  **not wrapped** in an `ExceptionGroup`. E.g. a regular `ValueError`
   propagating through the stack is "naked".
 
-* I assume that `ExceptionGroup` would be an iterable object.
+* We assume that `ExceptionGroup` would be an iterable object.
   E.g. `list(ExceptionGroup(ValueError('a'), TypeError('b')))` would be
   equal to `[ValueError('a'), TypeError('b')]`
 
-* I assume that `ExceptionGroup` won't be an indexable object; essentially
+* We assume that `ExceptionGroup` won't be an indexable object; essentially
   it's similar to Python `set`. The motivation for this is that exceptions
   can occur in random order, and letting users write `group[0]` to access the
-  "first" error is error prone. The actual implementation of `ExceptionGroup`
-  will likely use an ordered list of errors though.
+  "first" error is error prone. Although the actual implementation of
+  `ExceptionGroup` will likely use an ordered list of errors to preserve
+  the actual occurrence order for rendering.
 
-* I assume that `ExceptionGroup` will be a subclass of `BaseException`,
+* We assume that `ExceptionGroup` will be a subclass of `BaseException`,
   which means it's assignable to `Exception.__context__` and can be
-  directly handled with `except ExceptionGroup`.
+  directly handled with `try: ... except ExceptionGroup: ...`.
 
-* The behavior of good and old regular `try..except` will not be modified.
+* The behavior of the regular `try..except` block will not be modified.
 
-### Syntax
+## Syntax
 
 We're considering to introduce a new variant of the `try..except` syntax to
 simplify working with exception groups:
@@ -47,18 +47,11 @@ The new syntax can be viewed as a variant of the tuple unpacking syntax.
 The `*` symbol indicates that zero or more exceptions can be "caught" and
 processed by one `except *` clause.
 
-We also propose to enable "unpacking" in the `raise` statement:
+## Semantics
 
-```python
-errors = (ValueError('hello'), TypeError('world'))
-raise *errors
-```
+### Overview
 
-### Semantics
-
-#### Overview
-
-The  `except *SpamError` block will be run if the `try` code raised an
+The `except *SpamError` block will be run if the `try` code raised an
 `ExceptionGroup` with one or more instances of `SpamError`. It would also be
 triggered if a naked instance of  `SpamError` was raised.
 
@@ -66,7 +59,7 @@ The `except *BazError as e` block would aggregate all instances of `BazError`
 into a list, wrap that list into an `ExceptionGroup` instance, and assign
 the resultant object to `e`. The type of `e` would be
 `ExceptionGroup[BazError]`.  If there was just one naked instance of
-`BazError`, it would be wrapped into a list and assigned to `e`.
+`BazError`, it would be wrapped into an `ExceptionGroup` and assigned to `e`.
 
 The `except *(BarError, FooError) as e` would aggregate all instances of
 `BarError` or `FooError`  into a list and assign that wrapped list to `e`.
@@ -91,7 +84,7 @@ except *CancelledError:
    pass
 ```
 
-Exceptions are mached using a subclass check. For example:
+Exceptions are matched using a subclass check. For example:
 
 ```python
 try:
@@ -111,10 +104,9 @@ InterruptedError
 BlockingIOError
 ```
 
-#### New raise* Syntax
+### Raising ExceptionGroups manually
 
-The new  `raise *` syntax allows to users to only process some exceptions
-out of the matched set, e.g.:
+Exception groups can be raised manually:
 
 ```python
 try:
@@ -124,103 +116,161 @@ except *OSerror as errors:
   for e in errors:
     if e.errno != errno.EPIPE:
        new_errors.append(e)
-  raise *new_errors
+  raise ExceptionGroup(*new_errors)
 ```
 
-The above code ignores all `EPIPE` OS errors, while letting all others
-propagate.
+The above code ignores all `EPIPE` OS errors, while letting all other
+exceptions propagate.
 
-`raise *` syntax is special: it effectively extends the exception group with
-a list of errors without creating a new `ExceptionGroup` instance:
+Raising an `ExceptionGroup` introduces nesting:
 
 ```python
 try:
-  raise *(ValueError('a'), TypeError('b'))
+  raise ExceptionGroup(ValueError('a'), TypeError('b'))
 except *ValueError:
-  raise *(KeyError('x'), KeyError('y'))
+  raise ExceptionGroup(KeyError('x'), KeyError('y'))
 
 # would result in:
-#   ExceptionGroup({KeyError('x'), KeyError('y'), TypeError('b')})
+#
+#   ExceptionGroup(
+#     ExceptionGroup(
+#       KeyError('x'),
+#       KeyError('y'),
+#     ),
+#     TypeError('b'),
+#   )
 ```
 
-A regular raise would behave similarly:
+Although a regular `raise Exception` would not wrap `Exception` in a group:
 
 ```python
 try:
-  raise *(ValueError('a'), TypeError('b'))
+  raise ExceptionGroup(ValueError('a'), TypeError('b'))
 except *ValueError:
   raise KeyError('x')
 
 # would result in:
-#   ExceptionGroup({KeyError('x'), TypeError('b')})
+#
+#   ExceptionGroup(
+#     KeyError('x'),
+#     TypeError('b')
+#   )
 ```
 
-`raise *` accepts arguments of type `Iterable[BaseException]`.
-
-#### Unmatched Exceptions
+### Unmatched Exceptions
 
 Example:
 
 ```python
 try:
-  raise *(ValueError('a'), TypeError('b'), TypeError('c'), KeyError('e'))
+  raise ExceptionGroup(
+    ValueError('a'), TypeError('b'), TypeError('c'), KeyError('e')
+  )
 except *ValueError as e:
   print(f'got some ValueErrors: {e}')
 except *TypeError as e:
   print(f'got some TypeErrors: {e}')
-  raise *e
+  raise e
 ```
 
 The above code would print:
 
 ```
-got some ValueErrors: ExceptionGroup({ValueError('a')})
-got some TypeErrors: ExceptionGroup({TypeError('b'), TypeError('c')})
+got some ValueErrors: ExceptionGroup(ValueError('a'))
+got some TypeErrors: ExceptionGroup(TypeError('b'), TypeError('c'))
 ```
 
-And then crash with an unhandled `KeyError('e')` error.
+and then crash with an unhandled `ExceptionGroup`:
+
+```
+ExceptionGroup(
+  KeyError('e'),
+  ExceptionGroup(
+    TypeError('b'),
+    TypeError('c')
+  )
+)
+```
 
 Basically, before interpreting `except *` clauses, the interpreter will
-have an exception group object with a list of exceptions in it. Every
-`except *` clause, evaluated from top to bottom, can filter some of the
-exceptions out of the group and process them. In the end, if the exception
-group has no exceptions left in it, it wold mean that all exceptions were
-processed. If the exception group has some unprocessed exceptions, the current
-frame will be "pushed" to the group's traceback and the group would be
-propagated up the stack.
+have an "incoming" `ExceptionGroup` object with a list of exceptions in it
+to handle, and then:
 
-#### Exception Chaining
+* A new empty "result" `ExceptionGroup` would be created by the interpreter.
 
-If an error occur during processing a set of exceptions in a `except *` block,
-all matched errors would be put in a new `ExceptionGroup` which would have its
-`__context__` attribute set to the just occurred exception:
+* Every `except *` clause, run from top to bottom, can filter some of the
+  exceptions out of the group and process them. If the except block crashes
+  with an error, that error is put to the "result" `ExceptionGroup` (with the
+  group of unprocessed exceptions referenced via the `__context__` attribute.)
+
+* After there are no more `except*` clauses to evaluate, there are the
+  following possibilities:
+
+  * Both "incoming" and "result" `ExceptionGroup` are empty. This means
+    that all exceptions were processed and silenced successfully.
+
+  * Both "incoming" and "result" `ExceptionGroup` are not empty.
+    This means that not all of the exceptions were matched, and some were
+    matched but either triggered new errors, or were re-raised. The interpreter
+    would merge both groups into one group and raise it.
+
+  * The "incoming" `ExceptionGroup` is non-empty: not all exceptions were
+    processed. The interpreter would raise the "incoming" group.
+
+  * The "result" `ExceptionGroup` is non-empty: all exceptions were processed,
+    but some were re-raised or caused new errors. The interpreter would
+    raise the "result" group.
+
+The order of `except*` clauses is significant just like with the regular
+`try..except`, e.g.:
 
 ```python
 try:
-  raise *(ValueError('a'), ValueError('b'), TypeError('z'))
+  raise BlockingIOError
+except *OSError as e:
+  # Would catch the error
+  print(e)
+except *BlockingIOError:
+  # Would never run
+  print('never')
+
+# would print:
+#
+#   ExceptionGroup(BlockingIOError())
+```
+
+### Exception Chaining
+
+If an error occurs during processing a set of exceptions in a `except *` block,
+all matched errors would be put in a new `ExceptionGroup` which would be
+references from the just occurred exception via its `__context__` attribute:
+
+```python
+try:
+  raise ExceptionGroup(ValueError('a'), ValueError('b'), TypeError('z'))
 except *ValueError:
   1 / 0
 
 # would result in:
 #
-#   ExceptionGroup({
+#   ExceptionGroup(
 #     TypeError('z'),
 #     ZeroDivisionError()
-#   })
+#   )
 #
 # where the `ZeroDivizionError()` instance would have
 # its __context__ attribute set to
 #
-#   ExceptionGroup({
+#   ExceptionGroup(
 #     ValueError('a'), ValueError('b')
-#   })
+#   )
 ```
 
 It's also possible to explicitly chain exceptions:
 
 ```python
 try:
-  raise *(ValueError('a'), ValueError('b'), TypeError('z'))
+  raise ExceptionGroup(ValueError('a'), ValueError('b'), TypeError('z'))
 except *ValueError as errors:
   raise RuntimeError('unexpected values') from errors
 
@@ -234,20 +284,177 @@ except *ValueError as errors:
 # where the `RuntimeError()` instance would have
 # its __cause__ attribute set to
 #
-#   ExceptionGroup({
-#     ValueError('a'), ValueError('b')
-#   })
+#   ExceptionGroup(
+#     ValueError('a'),
+#     ValueError('b')
+#   )
 ```
 
-### Types of errors
+### Recursive Matching
+
+The matching of `except *` clauses against an `ExceptionGroup` is performed
+recursively. E.g.:
+
+```python
+try:
+  raise ExceptionGroup(
+    ValueError('a'),
+    TypeError('b'),
+    ExceptionGroup(
+      TypeError('c'),
+      KeyError('d')
+    )
+  )
+except *TypeError as e:
+  print(f'got some TypeErrors: {len(e)}')
+except *Exception:
+  pass
+
+# would print:
+#
+#  got some TypeErrors: 2
+```
+
+Iteration over an `ExceptionGroup` that has nested `ExceptionGroup` objects
+in it effectively flattens the entire tree. E.g.
+
+```python
+print(
+  list(
+    ExceptionGroup(
+      ValueError('a'),
+      TypeError('b'),
+      ExceptionGroup(
+        TypeError('c'),
+        KeyError('d')
+      )
+    )
+  )
+)
+
+# would output:
+#
+#   [ValueError('a'), TypeError('b'), TypeError('c'), KeyError('d')]
+```
+
+### "raise e" vs "raise"
+
+The difference between bare `raise` and a more specific `raise e` is more
+significant for exception groups than it is for regular exceptions. Consider
+the following two examples that illustrate it.
+
+Bare `raise` preserves the exception group internal structure:
+
+```python
+try:
+  raise ExceptionGroup(
+    ValueError('a'),
+    TypeError('b'),
+    ExceptionGroup(
+      TypeError('c'),
+      KeyError('d')
+    )
+  )
+except *TypeError as e:
+  raise
+
+# would crash with:
+#
+#  ExceptionGroup(
+#    ValueError('a'),
+#    TypeError('b'),
+#    ExceptionGroup(
+#      TypeError('c'),
+#      KeyError('d')
+#    )
+#  )
+```
+
+Whereas `raise e` would flatten the captured subset:
+
+```python
+try:
+  raise ExceptionGroup(
+    ValueError('a'),
+    TypeError('b'),
+    ExceptionGroup(
+      TypeError('c'),
+      KeyError('d')
+    )
+  )
+except *TypeError as e:
+  raise e
+
+# would crash with:
+#
+#  ExceptionGroup(
+#    ValueError('a'),
+#    ExceptionGroup(
+#      TypeError('b'),
+#      TypeError('c'),
+#    ),
+#    ExceptionGroup(
+#      KeyError('d')
+#    )
+#  )
+```
+
+### "continue" and "break" in "except*"
+
+Both `continue` and `break` are disallowed in `except*` clauses, causing
+a `SyntaxError`.
+
+Due to the fact that `try..except*` block allows multiple `except*` clauses
+to run while handling one `ExceptionGroup` with multiple different exceptions
+in it, allowing one innocent `break` or `continue` in one `except*` to
+effectively silence the entire group feels very error prone.
+
+### "return" in "except*"
+
+A `return` in a regular `except` or `finally` clause means
+"suppress the exception". For example, both of the below functions would
+silence their `ZeroDivisionError`s:
+
+```python
+def foo():
+   try:
+      1 / 0
+   finally:
+      print('the sound of')
+      return
+
+def bar():
+   try:
+      1 / 0
+   except ZeroDivisionError:
+     pass
+   finally:
+      print('silence')
+      return
+
+foo()
+bar()
+
+# would print:
+#
+#   the sound of
+#   silence
+```
+
+We propose to replicate this behavior in the `except*` syntax as it is useful
+as an escape hatch when it's clear that all exceptions can be silenced.
+
+## Design Considerations
+
+### Why try..except* syntax
 
 Fundamentally there are two kinds of exceptions: *control flow exceptions*
-and *operation exceptions*. The examples of former are `KeyboardInterrupt`,
-`asyncio.CancelledError`, etc. Latter are `TypeError`, `KeyError`, etc.
+(e.g. `KeyboardInterrupt` or `asyncio.CancelledError`) and
+*operation exceptions* (e.g. `TypeError` or `KeyError`).
 
 When writing async/await code that uses a concept of TaskGroups (or Trio's
 nurseries) to schedule different code concurrently, the users should
-approach these kinds in a fundamentally different way.
+approach these two kinds in a fundamentally different way.
 
 *Operation exceptions* such as `KeyError` should be handled within
 the async Task that runs the code.  E.g. this is what users should do:
@@ -270,22 +477,27 @@ except *KeyError:
   # no context to do anything with it but to log it.
 ```
 
-*Control flow exceptions* are a different beast. If, for example, we want to
-cancel an asyncio Task that spawned multiple concurrent Tasks in it with a
-TaskGroup, we need to make sure that:
+*Control flow exceptions* are different. If, for example, we want to
+cancel an asyncio Task that spawned other multiple concurrent Tasks in it
+with a an `asyncio.TaskGroup`, the following will happen:
 
 * CancelledErrors will be propagated to all still running tasks within
-  the group
+  the group;
 
-* CancelledErrors will be propagated to the Task that scheduled the group
+* CancelledErrors will be propagated to the Task that scheduled the group and
+  bubble up from `async with TaskGroup()`;
 
-* CancelledErrors will be propagated to the outer Tasks until either the entire
-  program stops, or the exception is handled and silenced
-  (e.g. by `asyncio.wait_for()`).
+* CancelledErrors will be propagated to the outer Task until either the entire
+  program shuts down with a `CancelledError`, or the cancellation is handled
+  and silenced (e.g. by `asyncio.wait_for()`).
 
-So suppose we have the `except *ExceptionType` syntax that can only handle
-an ExceptionGroup with ExceptionType in it. This means that we'd see a lot
-of code like this:
+*Control flow exceptions* alter the execution flow of a program.
+Therefore it is sometimes desirable for the user to react to them and
+run code, for example, to free resources.
+
+Suppose we have the `except *ExceptionType` syntax that only matches
+`ExceptionGroup[ExceptionType]` exceptions (a naked `ExceptionType` wouldn't
+be matched).  This means that we'd see a lot of code duplication:
 
 
 ```python
@@ -303,31 +515,31 @@ except CancelledError:
   raise
 ```
 
-Which led me to the conclusion that `except *CancelledError as e` should both:
+Which leads to the conclusion that `except *CancelledError as e` should both:
 
-* catch an individual standalone `CancelledError`, wrap it in an ExceptionGroup
-  and bind it to `e`. The type of `e` is always
-  `ExceptionGroup[CancelledError]`.
+* catch a naked `CancelledError`, wrap it in an `ExceptionGroup` and bind it
+  to `e`. The type of `e` would always be `ExceptionGroup[CancelledError]`.
 
 * if an exception group is propagating through the `try`,
   `except *CancelledError` should split the group and handle all exceptions
-  at once with one run of the code in `except *CancelledError`.
+  at once with one run of the code in `except *CancelledError` (and not
+  run the code for every matched individual exception.)
 
-Why "handle all exceptions at once with one run of the code code in except *"?
-Why not run the code in the `except` clause for every matching exception that
-we have in the group? Basically because there's no need to. As I mentioned
-above, catching *operation exceptions* should be done with the regular old
-`except KeyError` within the Task boundary, where there's context to handle
-that `KeyError`. Catching *control flow exceptions* is needed to **react**
-to some global signal, do cleanup or logging, but ultimately to either
-**stop** the signal **or propagate** it up the caller chain.
+Why "handle all exceptions at once"? Why not run the code in the `except`
+clause for every matched exception that we have in the group?
+Basically because there's no need to. As we mentioned above, catching
+*operation exceptions* should be done with the regular `except KeyError`
+within the Task boundary, where there's context to handle a `KeyError`.
+Catching *control flow exceptions* is needed to **react** to a global
+signal, do cleanup or logging, but ultimately to either **stop** the signal
+**or propagate** it up the caller chain.
 
-Separating exceptions kinds to two distinct groups (operation & control flow)
+Separating exception kinds to two distinct groups (operation & control flow)
 leads to another conclusion: an individual `try..except` block usually handles
-either the former or the latter, **but not a mix of both**. Which led me to
+either the former or the latter, **but not a mix of both**. Which leads to the
 conclusion that `except *CancelledError` should switch the behavior of the
 entire `try` block to make it run several of its `except *` clauses if
-necessary.  So:
+necessary.  Therefore:
 
 ```python
 try:
@@ -338,7 +550,8 @@ except ValueError:
   # handle
 ```
 
-is the old and familiar `try..except`, we don't need to change it. And:
+is a regular `try..except` block to be used for reacting to
+*operation exceptions*. And:
 
 ```python
 try:
@@ -349,99 +562,53 @@ except *CancelledError:
   # handle
 ```
 
-is an entirely different mode and it's **OK**, and moreover, almost expected
-from the user standpoint, to run both `except` clauses here.
+is an entirely different construct meant to make it easier to react to
+*control flow* signals.  When specified that way, it is expected from the user
+standpoint that both `except` clauses can be potentially run.
 
-And:
+Lastly, code that combines handling of both operation and control flow
+exceptions is unrealistic and impractical, e.g.:
 
 ```python
 try:
-  # code
+  async with TaskGroup() as g:
+    g.create_task(task1())
+    g.create_task(task2())
 except ValueError:
-  # handle
+  # handle ValueError
 except *CancelledError:
-  # handle
+  # handle cancellation
+  raise
 ```
 
-is weird and most likely suggests that the code should be refactored.
+In the above snippet it is impossible to attribute which task raised a
+`ValueError` -- `task1` or `task2`. So it really should be handled directly
+in those tasks. Whereas handling `*CancelledError` makes sense -- it means that
+the current task is being canceled and this might be a good opportunity to do
+a cleanup.
 
-### Types of user code
 
-Fundamentally we have applications and libraries. Applications are somewhat
-simpler -- they typically can dictate what version of Python they require.
+### Adoption of try..except* syntax
+
+Application code typically can dictates what version of Python it requires.
 Which makes introducing TaskGroups and the new `except *` clause somewhat
-easier. Basically, upon switching to Python 3.10, the application developer
+straightforward. Upon switching to Python 3.10, the application developer
 can grep their application code for every *control flow* exception they handle
 (search for `except CancelledError`) and mechanically change it to
-`except *CancelledError`. Generally, judging by my own experience, there are
-not so many places with code like that. Typically things like `CancelledError`
-and `TimeoutError` are handled only in a few places, the rest of the code
-relies on `try..finally` to cleanup its state.
+`except *CancelledError`.
 
-Library developers are in a worse position: they'll need to maintain backwards
-compatibility with older Pythons, so they can't start using the new `except *`
-syntax. Two thoughts here:
+Library developers, on the other hand, will need to maintain backwards
+compatibility with older Python versions, and therefore they wouldn't be able
+to start using the new `except *` syntax right away.  They will have to use
+the new ExceptionGroup low-level APIs along with `try..except ExceptionGroup`
+to support running user code that can raise exception groups.
 
-This means that we'll need to have a proper programmatic API to work with
-ExceptionGroups, so that libraries can write code like:
 
-```python
-try:
-  # run user code
-except CancelledError:
-  # handle cancellation
-except ExceptionGroup as e:
-  g1, g2 = e.split(CancelledError)
-  # handle cancellation
-```
-
-The API isn't going to be pretty, but that's OK, because a lot of existing
-asyncio libraries don't run user-provided coroutines that might use TaskGroups.
-In other words, a mysql or redis driver will never be able to catch an
-ExceptionGroup until it starts using TaskGroups itself.
-
-### Summary
-
-I just cannot wrap my head around introducing `try..catch` syntax to Python.
-I don't think we actually need it, with the right approach to documentation we
-can explain to the users how to use TaskGroups and `except *` syntax correctly
-and I believe it will only make their code better. Therefore,
-to conclude I think we should:
-
-* Introduce the ExceptionGroup object. Tweak the interpreter to recognize them
-and do the correct thing to the wrapped Tracebacks etc.
-
-* ExceptionGroups should have an API so that the few libraries that run user
-code can maintain compatibility with older Pythons.
-
-* `except *CancelledError as e` should catch:
-
-  * an individual `CancelledError`; it would be wrapped in an ExceptionGroup
-    created ad-hoc.
-  * a single `CancelledError` wrapped in an ExceptionGroup
-  * multiple `CancelledError`s at once.
-
-* If a `try` block has two or more `except *` clauses it can run them one after
-  another.
-
-* Perhaps, if there's one `except *` in a `try` block, we should **require**
-  all other `except` clauses to be written as `except *`.
-
-* Handling exceptions like `*TimeoutError` is rather pointless. It's hard
-  to correlate what specific subset of child tasks timed out -- the user
-  should really handle timeouts in the sub-tasks where you have the context.
-  So IMO exceptions groups are all about handling global signals like
-  CancelledError or KeyboardInterrupt and about preserving the clear history
-  of what crashed where and how to simplify development, debugging,
-  and diagnostics.
-
-### See Also
+## See Also
 
 * An analysis of how exception groups will likely be used in asyncio
   programs:
   https://github.com/python/exceptiongroups/issues/3#issuecomment-716203284
 
-* A WIP  implementation of the `ExceptionGroup` type by @iritkatriel
+* A WIP implementation of the `ExceptionGroup` type by @iritkatriel
   tracked [here](https://github.com/iritkatriel/cpython/tree/exceptionGroup).
-
-
