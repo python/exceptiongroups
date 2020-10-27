@@ -29,7 +29,7 @@
 
 ## Syntax
 
-We're considering to introduce a new variant of the `try..except` syntax to
+We're proposing to introduce a new variant of the `try..except` syntax to
 simplify working with exception groups:
 
 ```python
@@ -65,11 +65,13 @@ The `except *(BarError, FooError) as e` would aggregate all instances of
 `BarError` or `FooError`  into a list and assign that wrapped list to `e`.
 The type of `e` would be `ExceptionGroup[Union[BarError, FooError]]`.
 
-Even though every `except*` star can be called only once, any number of
+Even though every `except*` clause can be executed only once, any number of
 them can be run during handling of an `ExceptionGroup`. E.g. in the above
 example,  both `except *SpamError:` and `except *(BarError, FooError) as e:`
 could get executed during handling of one `ExceptionGroup` object, or all
-of the `except*` clauses, or just one of them.
+of the `except*` clauses, or just one of them. However, each exception in
+the exception group is only handled by one except* clause -- the first one
+that matches its type.
 
 It is not allowed to use both regular except blocks and the new `except*`
 clauses in the same `try` block. E.g. the following example would raise a
@@ -199,17 +201,17 @@ to handle, and then:
 * A new empty "result" `ExceptionGroup` would be created by the interpreter.
 
 * Every `except *` clause, run from top to bottom, can filter some of the
-  exceptions out of the group and process them. If the except block terminates
-  with an error, that error is put to the "result" `ExceptionGroup` (with the
+  exceptions out of the group and process them. If the except block raises an
+  exception, that exception is added to the "result" `ExceptionGroup` (with the
   group of unprocessed exceptions referenced via the `__context__` attribute.)
 
 * After there are no more `except*` clauses to evaluate, there are the
   following possibilities:
 
-  * Both "incoming" and "result" `ExceptionGroup` are empty. This means
+  * Both "incoming" and "result" `ExceptionGroup`s are empty. This means
     that all exceptions were processed and silenced.
 
-  * Both "incoming" and "result" `ExceptionGroup` are not empty.
+  * Both "incoming" and "result" `ExceptionGroup`s are not empty.
     This means that not all of the exceptions were matched, and some were
     matched but either triggered new errors, or were re-raised. The interpreter
     would merge both groups into one group and raise it.
@@ -243,7 +245,7 @@ except *BlockingIOError:
 
 If an error occurs during processing a set of exceptions in a `except *` block,
 all matched errors would be put in a new `ExceptionGroup` which would be
-references from the just occurred exception via its `__context__` attribute:
+referenced from the just occurred exception via its `__context__` attribute:
 
 ```python
 try:
@@ -262,7 +264,8 @@ except *ValueError:
 # its __context__ attribute set to
 #
 #   ExceptionGroup(
-#     ValueError('a'), ValueError('b')
+#     ValueError('a'),
+#     ValueError('b')
 #   )
 ```
 
@@ -422,7 +425,7 @@ In the above example the user could guess that most likely the program
 would print "1". But if instead of a simple `raise ExceptionGroup(A(), B())`
 there's scheduling of a few concurrent tasks the answer is no longer obvious.
 
-Ultimately though, due to the fact that `try..except*` block allows multiple
+Ultimately though, due to the fact that a `try..except*` block allows multiple
 `except*` clauses to run while handling one `ExceptionGroup` with
 multiple different exceptions in it, allowing one innocent `break`, `continue`,
 or `return` in one `except*` to effectively silence the entire group of
@@ -576,7 +579,7 @@ a cleanup.
 
 ### Adoption of try..except* syntax
 
-Application code typically can dictates what version of Python it requires.
+Application code typically can dictate what version of Python it requires.
 Which makes introducing TaskGroups and the new `except *` clause somewhat
 straightforward. Upon switching to Python 3.10, the application developer
 can grep their application code for every *control flow* exception they handle
