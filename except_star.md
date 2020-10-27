@@ -106,6 +106,86 @@ InterruptedError
 BlockingIOError
 ```
 
+### Unmatched Exceptions
+
+Example:
+
+```python
+try:
+  raise ExceptionGroup(
+    ValueError('a'), TypeError('b'), TypeError('c'), KeyError('e')
+  )
+except *ValueError as e:
+  print(f'got some ValueErrors: {e}')
+except *TypeError as e:
+  print(f'got some TypeErrors: {e}')
+  raise
+```
+
+The above code would print:
+
+```
+got some ValueErrors: ExceptionGroup(ValueError('a'))
+got some TypeErrors: ExceptionGroup(TypeError('b'), TypeError('c'))
+```
+
+and then terminate with an unhandled `ExceptionGroup`:
+
+```
+ExceptionGroup(
+  TypeError('b'),
+  TypeError('c'),
+  KeyError('e'),
+)
+```
+
+Basically, before interpreting `except *` clauses, the interpreter will
+have an "incoming" `ExceptionGroup` object with a list of exceptions in it
+to handle, and then:
+
+* A new empty "result" `ExceptionGroup` would be created by the interpreter.
+
+* Every `except *` clause, run from top to bottom, can filter some of the
+  exceptions out of the group and process them. If the except block raises an
+  exception, that exception is added to the "result" `ExceptionGroup` (with the
+  group of unprocessed exceptions referenced via the `__context__` attribute.)
+
+* After there are no more `except*` clauses to evaluate, there are the
+  following possibilities:
+
+  * Both "incoming" and "result" `ExceptionGroup`s are empty. This means
+    that all exceptions were processed and silenced.
+
+  * Both "incoming" and "result" `ExceptionGroup`s are not empty.
+    This means that not all of the exceptions were matched, and some were
+    matched but either triggered new errors, or were re-raised. The interpreter
+    would merge both groups into one group and raise it.
+
+  * The "incoming" `ExceptionGroup` is non-empty: not all exceptions were
+    processed. The interpreter would raise the "incoming" group.
+
+  * The "result" `ExceptionGroup` is non-empty: all exceptions were processed,
+    but some were re-raised or caused new errors. The interpreter would
+    raise the "result" group.
+
+The order of `except*` clauses is significant just like with the regular
+`try..except`, e.g.:
+
+```python
+try:
+  raise BlockingIOError
+except *OSError as e:
+  # Would catch the error
+  print(e)
+except *BlockingIOError:
+  # Would never run
+  print('never')
+
+# would print:
+#
+#   ExceptionGroup(BlockingIOError())
+```
+
 ### Raising ExceptionGroups manually
 
 Exception groups can be raised manually:
@@ -157,88 +237,6 @@ except *ValueError:
 #     KeyError('x'),
 #     TypeError('b')
 #   )
-```
-
-### Unmatched Exceptions
-
-Example:
-
-```python
-try:
-  raise ExceptionGroup(
-    ValueError('a'), TypeError('b'), TypeError('c'), KeyError('e')
-  )
-except *ValueError as e:
-  print(f'got some ValueErrors: {e}')
-except *TypeError as e:
-  print(f'got some TypeErrors: {e}')
-  raise
-```
-
-The above code would print:
-
-```
-got some ValueErrors: ExceptionGroup(ValueError('a'))
-got some TypeErrors: ExceptionGroup(TypeError('b'), TypeError('c'))
-```
-
-and then terminate with an unhandled `ExceptionGroup`:
-
-```
-ExceptionGroup(
-  KeyError('e'),
-  ExceptionGroup(
-    TypeError('b'),
-    TypeError('c')
-  )
-)
-```
-
-Basically, before interpreting `except *` clauses, the interpreter will
-have an "incoming" `ExceptionGroup` object with a list of exceptions in it
-to handle, and then:
-
-* A new empty "result" `ExceptionGroup` would be created by the interpreter.
-
-* Every `except *` clause, run from top to bottom, can filter some of the
-  exceptions out of the group and process them. If the except block raises an
-  exception, that exception is added to the "result" `ExceptionGroup` (with the
-  group of unprocessed exceptions referenced via the `__context__` attribute.)
-
-* After there are no more `except*` clauses to evaluate, there are the
-  following possibilities:
-
-  * Both "incoming" and "result" `ExceptionGroup`s are empty. This means
-    that all exceptions were processed and silenced.
-
-  * Both "incoming" and "result" `ExceptionGroup`s are not empty.
-    This means that not all of the exceptions were matched, and some were
-    matched but either triggered new errors, or were re-raised. The interpreter
-    would merge both groups into one group and raise it.
-
-  * The "incoming" `ExceptionGroup` is non-empty: not all exceptions were
-    processed. The interpreter would raise the "incoming" group.
-
-  * The "result" `ExceptionGroup` is non-empty: all exceptions were processed,
-    but some were re-raised or caused new errors. The interpreter would
-    raise the "result" group.
-
-The order of `except*` clauses is significant just like with the regular
-`try..except`, e.g.:
-
-```python
-try:
-  raise BlockingIOError
-except *OSError as e:
-  # Would catch the error
-  print(e)
-except *BlockingIOError:
-  # Would never run
-  print('never')
-
-# would print:
-#
-#   ExceptionGroup(BlockingIOError())
 ```
 
 ### Exception Chaining
