@@ -145,10 +145,11 @@ to handle, and then:
 
 * A new empty "result" `ExceptionGroup` would be created by the interpreter.
 
-* Every `except *` clause, run from top to bottom, can filter some of the
-  exceptions out of the group and process them. If the except block raises an
-  exception, that exception is added to the "result" `ExceptionGroup` (with the
-  group of unprocessed exceptions referenced via the `__context__` attribute.)
+* Every `except *` clause, run from top to bottom, can match a subset of the
+  exceptions out of the group forming a "working set" of errors for the current
+  clause.  If the except block raises an exception, that exception is added
+  to the "result" `ExceptionGroup` (with its "working set" of errors
+  linked to that exception via the `__context__` attribute.)
 
 * After there are no more `except*` clauses to evaluate, there are the
   following possibilities:
