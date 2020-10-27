@@ -337,13 +337,9 @@ print(
 #   [ValueError('a'), TypeError('b'), TypeError('c'), KeyError('d')]
 ```
 
-### "raise e" vs "raise"
+### "raise e" and "raise"
 
-The difference between bare `raise` and a more specific `raise e` is more
-significant for exception groups than it is for regular exceptions. Consider
-the following two examples that illustrate it.
-
-Bare `raise` preserves the exception group internal structure:
+There is no difference between bare `raise` and a more specific `raise e`:
 
 ```python
 try:
@@ -356,7 +352,7 @@ try:
     )
   )
 except *TypeError as e:
-  raise
+  raise  # or "raise e"
 
 # would terminate with:
 #
@@ -370,7 +366,11 @@ except *TypeError as e:
 #  )
 ```
 
-Whereas `raise e` would flatten the captured subset:
+It is important to point out that the `ExceptionGroup` bound to `e` is an
+ephemeral object. Raising it via `raise` or `raise e` will not cause changes
+to the overall shape of the `ExceptionGroup`. If the user wants to "flatten"
+the tree, they can explicitly create a new `ExceptionGroup` and raise it:
+
 
 ```python
 try:
@@ -383,7 +383,7 @@ try:
     )
   )
 except *TypeError as e:
-  raise e
+  raise ExceptionGroup(*e)
 
 # would terminate with:
 #
