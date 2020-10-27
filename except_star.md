@@ -2,30 +2,30 @@
 
 ## Disclaimer
 
-* We use the `ExceptionGroup` name herein, even though there
-  are other alternatives, e.g. `AggregateException`. Naming of the
-  "exception group" object is out of scope of this proposal.
+* We use the `ExceptionGroup` name, even though there
+  are other alternatives, e.g. `AggregateException` and `MultiError`.
+  Naming of the "exception group" object is out of scope of this proposal.
 
 * We use the term "naked" exception for regular Python exceptions
   **not wrapped** in an `ExceptionGroup`. E.g. a regular `ValueError`
   propagating through the stack is "naked".
 
-* We assume that `ExceptionGroup` would be an iterable object.
-  E.g. `list(ExceptionGroup(ValueError('a'), TypeError('b')))` would be
+* `ExceptionGroup` is an iterable object.
+  E.g. `list(ExceptionGroup(ValueError('a'), TypeError('b')))` is
   equal to `[ValueError('a'), TypeError('b')]`
 
-* We assume that `ExceptionGroup` won't be an indexable object; essentially
+* `ExceptionGroup` is not an indexable object; essentially
   it's similar to Python `set`. The motivation for this is that exceptions
   can occur in random order, and letting users write `group[0]` to access the
   "first" error is error prone. Although the actual implementation of
   `ExceptionGroup` will likely use an ordered list of errors to preserve
   the actual occurrence order for rendering.
 
-* We assume that `ExceptionGroup` will be a subclass of `BaseException`,
-  which means it's assignable to `Exception.__context__` and can be
+* `ExceptionGroup` is a subclass of `BaseException`,
+  is assignable to `Exception.__context__`, and can be
   directly handled with `try: ... except ExceptionGroup: ...`.
 
-* The behavior of the regular `try..except` block will not be modified.
+* The behavior of the regular `try..except` statement will not be modified.
 
 ## Syntax
 
@@ -71,7 +71,7 @@ example,  both `except *SpamError:` and `except *(BarError, FooError) as e:`
 could get executed during handling of one `ExceptionGroup` object, or all
 of the `except*` clauses, or just one of them.
 
-It is not allowed to use both regular `except` clauses and the new `except*`
+It is not allowed to use both regular except blocks and the new `except*`
 clauses in the same `try` block. E.g. the following example would raise a
 `SyntaxErorr`:
 
@@ -170,7 +170,7 @@ except *ValueError as e:
   print(f'got some ValueErrors: {e}')
 except *TypeError as e:
   print(f'got some TypeErrors: {e}')
-  raise e
+  raise
 ```
 
 The above code would print:
@@ -180,7 +180,7 @@ got some ValueErrors: ExceptionGroup(ValueError('a'))
 got some TypeErrors: ExceptionGroup(TypeError('b'), TypeError('c'))
 ```
 
-and then crash with an unhandled `ExceptionGroup`:
+and then terminate with an unhandled `ExceptionGroup`:
 
 ```
 ExceptionGroup(
@@ -199,7 +199,7 @@ to handle, and then:
 * A new empty "result" `ExceptionGroup` would be created by the interpreter.
 
 * Every `except *` clause, run from top to bottom, can filter some of the
-  exceptions out of the group and process them. If the except block crashes
+  exceptions out of the group and process them. If the except block terminates
   with an error, that error is put to the "result" `ExceptionGroup` (with the
   group of unprocessed exceptions referenced via the `__context__` attribute.)
 
@@ -207,7 +207,7 @@ to handle, and then:
   following possibilities:
 
   * Both "incoming" and "result" `ExceptionGroup` are empty. This means
-    that all exceptions were processed and silenced successfully.
+    that all exceptions were processed and silenced.
 
   * Both "incoming" and "result" `ExceptionGroup` are not empty.
     This means that not all of the exceptions were matched, and some were
@@ -258,7 +258,7 @@ except *ValueError:
 #     ZeroDivisionError()
 #   )
 #
-# where the `ZeroDivizionError()` instance would have
+# where the `ZeroDivisionError()` instance would have
 # its __context__ attribute set to
 #
 #   ExceptionGroup(
@@ -358,7 +358,7 @@ try:
 except *TypeError as e:
   raise
 
-# would crash with:
+# would terminate with:
 #
 #  ExceptionGroup(
 #    ValueError('a'),
@@ -385,7 +385,7 @@ try:
 except *TypeError as e:
   raise e
 
-# would crash with:
+# would terminate with:
 #
 #  ExceptionGroup(
 #    ValueError('a'),
@@ -427,10 +427,9 @@ def bar():
    try:
       1 / 0
    except ZeroDivisionError:
-     pass
+     return
    finally:
       print('silence')
-      return
 
 foo()
 bar()
@@ -443,6 +442,36 @@ bar()
 
 We propose to replicate this behavior in the `except*` syntax as it is useful
 as an escape hatch when it's clear that all exceptions can be silenced.
+
+That said, the regular try statement allows to return a value from the except
+or the finally clause:
+
+```python
+def bar():
+   try:
+      1 / 0
+   except ZeroDivisionError:
+     return 42
+
+print(bar())
+
+# would print "42"
+```
+
+Allowing non-None returns in `except*` allows to write unpredictable code,
+e.g.:
+
+```python
+try:
+    raise ExceptionGroup(A(), B())
+except *A:
+    return 1
+except *B:
+    return 2
+```
+
+Therefore non-None returns are disallowed in `except*` clauses.
+
 
 ## Design Considerations
 
@@ -525,7 +554,7 @@ Which leads to the conclusion that `except *CancelledError as e` should both:
   at once with one run of the code in `except *CancelledError` (and not
   run the code for every matched individual exception.)
 
-Why "handle all exceptions at once"? Why not run the code in the `except`
+Why "handle all exceptions at once"? Why not run the code in the except
 clause for every matched exception that we have in the group?
 Basically because there's no need to. As we mentioned above, catching
 *operation exceptions* should be done with the regular `except KeyError`
