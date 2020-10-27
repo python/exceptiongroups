@@ -399,79 +399,36 @@ except *TypeError as e:
 #  )
 ```
 
-### "continue" and "break" in "except*"
+### "continue", "break", and "return" in "except*"
 
-Both `continue` and `break` are disallowed in `except*` clauses, causing
-a `SyntaxError`.
+`continue`, `break`, and `return` are disallowed in `except*` clauses,
+causing a `SyntaxError`.
 
-Due to the fact that `try..except*` block allows multiple `except*` clauses
-to run while handling one `ExceptionGroup` with multiple different exceptions
-in it, allowing one innocent `break` or `continue` in one `except*` to
-effectively silence the entire group feels very error prone.
-
-### "return" in "except*"
-
-A `return` in a regular `except` or `finally` clause means
-"suppress the exception". For example, both of the below functions would
-silence their `ZeroDivisionError`s:
+Consider if they were allowed:
 
 ```python
 def foo():
-   try:
-      1 / 0
-   finally:
-      print('the sound of')
-      return
-
-def bar():
-   try:
-      1 / 0
-   except ZeroDivisionError:
-     return
-   finally:
-      print('silence')
-
-foo()
-bar()
-
-# would print:
-#
-#   the sound of
-#   silence
-```
-
-We propose to replicate this behavior in the `except*` syntax as it is useful
-as an escape hatch when it's clear that all exceptions can be silenced.
-
-That said, the regular try statement allows to return a value from the except
-or the finally clause:
-
-```python
-def bar():
-   try:
-      1 / 0
-   except ZeroDivisionError:
-     return 42
-
-print(bar())
-
-# would print "42"
-```
-
-Allowing non-None returns in `except*` allows to write unpredictable code,
-e.g.:
-
-```python
-try:
+  try:
     raise ExceptionGroup(A(), B())
-except *A:
+  except *A:
     return 1
-except *B:
+  except *B:
     return 2
+
+print(foo())
 ```
 
-Therefore non-None returns are disallowed in `except*` clauses.
+In the above example the user could guess that most likely the program
+would print "1". But if instead of a simple `raise ExceptionGroup(A(), B())`
+there's scheduling of a few concurrent tasks the answer is no longer obvious.
 
+Ultimately though, due to the fact that `try..except*` block allows multiple
+`except*` clauses to run while handling one `ExceptionGroup` with
+multiple different exceptions in it, allowing one innocent `break`, `continue`,
+or `return` in one `except*` to effectively silence the entire group of
+errors is error prone.
+
+We can consider allowing some of them in future versions of Python.
 
 ## Design Considerations
 
