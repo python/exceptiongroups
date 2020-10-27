@@ -651,3 +651,6 @@ to support running user code that can raise exception groups.
 
 * A WIP implementation of the `ExceptionGroup` type by @iritkatriel
   tracked [here](https://github.com/iritkatriel/cpython/tree/exceptionGroup).
+
+* The issue where this concept was first formalized:
+  https://github.com/python/exceptiongroups/issues/4
