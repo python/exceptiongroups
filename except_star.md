@@ -307,13 +307,13 @@ try:
     )
   )
 except *TypeError as e:
-  print(f'got some TypeErrors: {len(e)}')
+  print(f'got some TypeErrors: {list(e)}')
 except *Exception:
   pass
 
 # would print:
 #
-#  got some TypeErrors: 2
+#  got some TypeErrors: [TypeError('b'), TypeError('c')]
 ```
 
 Iteration over an `ExceptionGroup` that has nested `ExceptionGroup` objects
@@ -338,9 +338,12 @@ print(
 #   [ValueError('a'), TypeError('b'), TypeError('c'), KeyError('d')]
 ```
 
-### "raise e" and "raise"
+### Re-raising ExceptionGroups
 
-There is no difference between bare `raise` and a more specific `raise e`:
+It is important to point out that the `ExceptionGroup` bound to `e` is an
+ephemeral object. Raising it via `raise` or `raise e` will not cause changes
+to the overall shape of the `ExceptionGroup`.  Any modifications to it will
+likely get lost:
 
 ```python
 try:
@@ -353,24 +356,13 @@ try:
     )
   )
 except *TypeError as e:
-  raise  # or "raise e"
-
-# would terminate with:
-#
-#  ExceptionGroup(
-#    ValueError('a'),
-#    TypeError('b'),
-#    ExceptionGroup(
-#      TypeError('c'),
-#      KeyError('d')
-#    )
-#  )
+  e.foo = 'bar'
+  # ^----------- `e` is an ephemeral object that might get
+  #              destroyed after the `except*` clause.
 ```
 
-It is important to point out that the `ExceptionGroup` bound to `e` is an
-ephemeral object. Raising it via `raise` or `raise e` will not cause changes
-to the overall shape of the `ExceptionGroup`. If the user wants to "flatten"
-the tree, they can explicitly create a new `ExceptionGroup` and raise it:
+If the user wants to "flatten" the tree, they can explicitly create a new
+`ExceptionGroup` and raise it:
 
 
 ```python
@@ -395,6 +387,65 @@ except *TypeError as e:
 #      TypeError('c'),
 #    ),
 #    ExceptionGroup(
+#      KeyError('d')
+#    )
+#  )
+```
+
+With the regular exceptions, there's a subtle difference between bare `raise`
+and a more specific `raise e`:
+
+```python
+def foo():                           | def foo():
+  try:                               | try:
+    1 / 0                            |   1 / 0
+  except ZeroDivisionError as e:     | except ZeroDivisionError:
+    raise e                          |   raise
+                                     |
+foo()                                | foo()
+                                     |
+Traceback (most recent call last):   | Traceback (most recent call last):
+  File "/Users/guido/a.py", line 7   |   File "/Users/guido/b.py", line 7
+    foo()                            |     foo()
+  File "/Users/guido/a.py", line 5   |   File "/Users/guido/b.py", line 3
+    raise e                          |     1/0
+  File "/Users/guido/a.py", line 3   | ZeroDivisionError: division by zero
+    1/0                              |
+ZeroDivisionError: division by zero  |
+```
+
+This difference is preserved with exception groups:
+
+* The `raise` form re-raises all exceptions from the group *without recording
+  the current frame in their tracebacks*.
+
+* The `raise e` form re-raises all exceptions from the group with tracebacks
+  updated to point out to the current frame, effectively resulting in user
+  seeing the `raise e` line in their tracebacks.
+
+That said, both forms would not affect the overall shape of the exception
+group:
+
+```python
+try:
+  raise ExceptionGroup(
+    ValueError('a'),
+    TypeError('b'),
+    ExceptionGroup(
+      TypeError('c'),
+      KeyError('d')
+    )
+  )
+except *TypeError as e:
+  raise  # or "raise e"
+
+# would both terminate with:
+#
+#  ExceptionGroup(
+#    ValueError('a'),
+#    TypeError('b'),
+#    ExceptionGroup(
+#      TypeError('c'),
 #      KeyError('d')
 #    )
 #  )
