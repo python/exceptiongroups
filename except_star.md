@@ -82,8 +82,8 @@ try:
    ...
 except ValueError:
    pass
-except *CancelledError:
-   pass
+except *CancelledError:  # <- SyntaxError:
+   pass                  #    combining `except` and `except*` is prohibited
 ```
 
 Exceptions are matched using a subclass check. For example:
@@ -96,7 +96,7 @@ except *OSerror as errors:
     print(type(e).__name__)
 ```
 
-could output:
+would output:
 
 ```
 BlockingIOError
@@ -393,8 +393,8 @@ except *TypeError as e:
 #  )
 ```
 
-With the regular exceptions, there's a subtle difference between bare `raise`
-and a more specific `raise e`:
+With the regular exceptions, there's a subtle difference between `raise e`
+and a bare `raise`:
 
 ```python
 def foo():                           | def foo():
