@@ -518,7 +518,7 @@ assigned to the `__traceback__` field of an exception.
 Instead of a single `tb_next` link to a single traceback, the
 `TracebackGroup` has a `tb_next_map` that maps each exception from the
 `ExceptionGroup` to a traceback. This map holds weak references to
-it keys so that it does not prevent GC exceptions.
+its keys so that it does not prevent GC of exceptions.
 
 
 **Appending a frame** `f` to the end of the traceback of an exception `eg`
