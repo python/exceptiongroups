@@ -485,96 +485,59 @@ We can consider allowing some of them in future versions of Python.
 
 ## Traceback Groups
 
-For regular exceptions, the traceback represents a simple path of frames, from
-the frame in which the exception was raised to the frame in which it was
+For regular exceptions, the traceback represents a simple path of frames,
+from the frame in which the exception was raised to the frame in which it was
 was caught or, if it hasn't been caught yet, the frame that the program's
-execution is currently in.
-At any point in time the interpreter has at most one 'current exception' (the
-one returned by `sys.exc_info()`), and as execution progresses, it is
-necessary to append frames to this exception's traceback. Therefore the
-traceback's list of frames is stored in reverse order, such that the `next`
-links lead from the last frame to the first. Appending a new frame is then
-simply a matter of inserting a new head to the linked list referenced from
-the exception's `__traceback__` field.
+execution is currently in. The list is constructed by the interpreter which
+appends a frame to the traceback of the 'current exception' (the one returned
+by `sys.exc_info()`) if one exists. To support efficient appends, the links
+in a traceback's list of frames are from the oldest to the newest frame.
+Appending a new frame is then simply a matter of inserting a new head to the
+linked list referenced from the exception's `__traceback__` field. Crucially,
+the traceback is immutable in the sense that once frames are added they are
+no longer modified.
 
-When we add `ExceptionGroup`s, the traceback becomes a tree of frames: each
+With `ExceptionGroup`s, the traceback becomes a tree of frames: each
 exception has a traceback that describes the path from where it was raised
 to where it was first added to an `ExceptionGroup`. From that point, all
 exceptions in the same group travel through the same frames, possibly
-merging with other exceptions into larger `ExceptionGroup`s. In this section
-we describe the `TracebackGroup` data structure which we are proposing to
-represent the tracebacks of the exceptions in an `ExceptionGroup`.
+merging with other exceptions into larger `ExceptionGroup`s. Note that
+there is a 1-1 correspondence between the branching nodes of this tree
+and the (nested) `ExceptionGroup`s. In this section we describe the
+`TracebackGroup` data structure which we are proposing to represent the
+tracebacks of the exceptions in an `ExceptionGroup`.
+
+While a `Traceback` list node has a single `tb_next` link to the next frame,
+a `TracebackGroup` has a mapping, `tb_next_map`, from each of the exceptions
+it contains to the next frame in the traceback of that exception. The keys
+are the IDs of the exception objects, so that it does not hold references to
+the exceptions. As `ExceptionGroup`s are immutable, so too are `TracebackGroup`s,
+which are constrcuted from an `ExceptionGroup` and only every modified by appending
+new frames to them.
 
 `TracebackGroup`s satisfy the following requirements:
-1. Supports appending a frame in O(1) time.
-2. Supports efficient insertions and deletions of tracebacks as the
-exception group grows and splits.
-3. Does not hold references that can prevent GC of exceptions from the group.
-4. Does not require API breaking changes to the current traceback
-representation for regular exceptions.
-
-The `TracebackGroup` type is a subclass of `Traceback` and therefore can be
-assigned to the `__traceback__` field of an exception.
-Instead of a single `tb_next` link to a single traceback, the
-`TracebackGroup` has a `tb_next_map` that maps each exception from the
-`ExceptionGroup` to a traceback. This map holds weak references to
-its keys so that it does not prevent GC of exceptions.
+1. Support appending a frame in O(1) time.
+2. Support efficient splits, which divide an exception group into two groups
+according to some predicate, while preserving the nested structure of the
+original group.
+3. Do not hold references that can prevent GC of exceptions from the group.
+4. Do not require API breaking changes to the current traceback representation
+for regular exceptions.
 
 
-**Appending a frame** `f` to the end of the traceback of an exception `eg`
-is exactly the same as for traceback groups and regular tracebacks:
+**Appending a frame**  `f` to the end of the traceback of an exception `eg`
+is exactly the same as for traceback groups and regular tracebacks (this is
+done in C and requires that `TracebackGroup` is a subclass of `Traceback`):
 
 ```python
 tb = Traceback(tb_frame = f, tb_next = eg.__traceback__)
 eg.__traceback__ = tb
 ```
 
-**Adding an exception** `e` to the `ExceptionGroup eg` requires adding its
-exception(s) to `tb_next_map` of `eg`:
+When we **split out a subset** of the exceptions in an `ExceptionGroup`
+that match a certain except* clause, we create a new `TracebackGroup` for
+each of the resulting `ExceptionGroup`s.
 
-```python
-if not isinstance(e, ExceptionGroup):
-    keys = [e]                               # e is a simple exception
-else:
-    keys = list(e.tb_next_map.keys())        # e is an ExceptionGroup
-
-for k in keys:
-    if not isinstance(eg.__traceback__, TracebackGroup):
-        # simple traceback, convert it to a group    (WILL WE EVER NEED THIS?)
-        eg.__traceback__ = TracebackGroup.fromTraceback(eg.__traceback__)
-    eg.__traceback__.tb_next_map[weakref(k)] = e.__traceback__
-```
-
-To **remove** an exception from an `ExceptionGroup` we do the reverse: we
-remove this exception from all `tb_next_map`s on its traceback path (there
-may be more than one `tb_next_map` that have this exception in its keys if
-the `ExceptionGroup` is nested):
-
-```python
-tb = e.__traceback__
-while tb:
-    if isintance(tb, TracebackGroup):
-        next = tb.tb_next_map[e]
-        del tb.tb_next_map[e]
-        tb = next
-    else:
-        tb = tb.tb_next
-```
-
-
-To **split out a subset** of the exceptions in an `ExceptionGroup` that
-match a certain except* clause, we create a new empty `ExceptionGroup`,
-and then perform a sequence of deletions from the original group and
-insertions into the new group. These operations update the tracebacks
-as well:
-
-```python
-def split(eg, type):
-    matches = [e in eg if isinstance(e, type)]
-    for m in matches:
-        eg.remove(m)
-    return ExceptionGroup(matches)
-```
 
 ## Design Considerations
 
