@@ -483,7 +483,7 @@ errors is error prone.
 
 We can consider allowing some of them in future versions of Python.
 
-## Traceback Groups
+## The Traceback of an Exception Group
 
 For regular exceptions, the traceback represents a simple path of frames,
 from the frame in which the exception was raised to the frame in which it was
@@ -497,47 +497,15 @@ linked list referenced from the exception's `__traceback__` field. Crucially,
 the traceback is immutable in the sense that once frames are added they are
 no longer modified.
 
-With `ExceptionGroup`s, the traceback becomes a tree of frames: each
-exception has a traceback that describes the path from where it was raised
-to where it was first added to an `ExceptionGroup`. From that point, all
-exceptions in the same group travel through the same frames, possibly
-merging with other exceptions into larger `ExceptionGroup`s. Note that
-there is a 1-1 correspondence between the branching nodes of this tree
-and the (nested) `ExceptionGroup`s. In this section we describe the
-`TracebackGroup` data structure which we are proposing to represent the
-tracebacks of the exceptions in an `ExceptionGroup`.
+We will not need to make any changes to this data structure. The
+`__traceback__` field of the ExceptionGroup object represents that path that
+the exceptions travelled through together after being joined into the
+ExceptionGroup, and the same field on each of the nested exceptions represents
+that path through which each exception arrived to the frame of the merge.
 
-While a `Traceback` list node has a single `tb_next` link to the next frame,
-a `TracebackGroup` has a mapping, `tb_next_map`, from each of the exceptions
-it contains to the next frame in the traceback of that exception. The keys
-are the IDs of the exception objects, so that it does not hold references to
-the exceptions. As `ExceptionGroup`s are immutable, so too are `TracebackGroup`s,
-which are constrcuted from an `ExceptionGroup` and only every modified by appending
-new frames to them.
-
-`TracebackGroup`s satisfy the following requirements:
-1. Support appending a frame in O(1) time.
-2. Support efficient splits, which divide an exception group into two groups
-according to some predicate, while preserving the nested structure of the
-original group.
-3. Do not hold references that can prevent GC of exceptions from the group.
-4. Do not require API breaking changes to the current traceback representation
-for regular exceptions.
-
-
-**Appending a frame**  `f` to the end of the traceback of an exception `eg`
-is exactly the same as for traceback groups and regular tracebacks (this is
-done in C and requires that `TracebackGroup` is a subclass of `Traceback`):
-
-```python
-tb = Traceback(tb_frame = f, tb_next = eg.__traceback__)
-eg.__traceback__ = tb
-```
-
-When we **split out a subset** of the exceptions in an `ExceptionGroup`
-that match a certain except* clause, we create a new `TracebackGroup` for
-each of the resulting `ExceptionGroup`s.
-
+What we will need to change it code that interprets and displays tracebacks,
+because it will now need to continue into tracebacks of nested exceptions
+once the traceback of an ExceptionGroup has been processed.
 
 ## Design Considerations
 
