@@ -205,22 +205,28 @@ except *OSerror as errors:
 The above code ignores all `EPIPE` OS errors, while letting all other
 exceptions propagate.
 
-Raising an `ExceptionGroup` introduces nesting:
+Raising an `ExceptionGroup` introduces nesting because the traceback and chaining
+information needs to be maintained:
 
 ```python
 try:
-  raise ExceptionGroup(ValueError('a'), TypeError('b'))
+  raise ExceptionGroup("one", ValueError('a'), TypeError('b'))
 except *ValueError:
-  raise ExceptionGroup(KeyError('x'), KeyError('y'))
+  raise ExceptionGroup("two", KeyError('x'), KeyError('y'))
 
 # would result in:
 #
 #   ExceptionGroup(
-#     ExceptionGroup(
+#     "????",            <-- TODO: what is the message of this EG?
+#     ExceptionGroup(    <-- context = ExceptionGroup(ValueError('a'))
+#       "two",
 #       KeyError('x'),
 #       KeyError('y'),
 #     ),
-#     TypeError('b'),
+#     ExceptionGroup(    <-- context, cause, tb same as the original "one"
+#       "one",
+#       TypeError('b'),
+#     )
 #   )
 ```
 
