@@ -204,7 +204,7 @@ except *OSerror as errors:
   for e in errors:
     if e.errno != errno.EPIPE:
        new_errors.append(e)
-  raise ExceptionGroup(e.msg, *new_errors)
+  raise ExceptionGroup(errors.msg, *new_errors)
 ```
 
 The above code ignores all `EPIPE` OS errors, while letting all other
