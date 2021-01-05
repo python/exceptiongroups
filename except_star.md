@@ -503,7 +503,7 @@ the exceptions travelled through together after being joined into the
 ExceptionGroup, and the same field on each of the nested exceptions represents
 that path through which each exception arrived to the frame of the merge.
 
-What we will need to change it code that interprets and displays tracebacks,
+What we will need to change is code that interprets and displays tracebacks,
 because it will now need to continue into tracebacks of nested exceptions
 once the traceback of an ExceptionGroup has been processed.
 
@@ -666,6 +666,16 @@ to start using the new `except *` syntax right away.  They will have to use
 the new ExceptionGroup low-level APIs along with `try..except ExceptionGroup`
 to support running user code that can raise exception groups.
 
+### Traceback Representation
+
+We considered options for adapting the traceback data structure to represent
+trees, but it became aparent that a traceback tree is not meaninful once separated
+from the exceptions it refers to. While a simple-path traceback can be attached to
+any exception by a `with_traceback()` call, it is hard to imagine a case where it
+makes sense to assign a traceback tree to an exception group.  Furthermore, a
+useful display of the traceback includes information about the nested exceptions.
+For this reason we decided it is best to leave the traceback mechanism as it is
+and modify the traceback display code.
 
 ## See Also
 
