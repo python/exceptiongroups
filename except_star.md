@@ -87,6 +87,23 @@ except *CancelledError:  # <- SyntaxError:
    pass                  #    combining `except` and `except*` is prohibited
 ```
 
+It is possible to catch the `ExceptionGroup` type with a plain except, but not
+with an `except*` because the latter is ambiguous:
+
+```python
+try:
+   ...
+except ExceptionGroup:  # <- This works
+   pass
+
+
+try:
+   ...
+except *ExceptionGroup:  # <- Runtime error
+   pass
+```
+
+
 Exceptions are matched using a subclass check. For example:
 
 ```python
