@@ -488,14 +488,14 @@ We can consider allowing some of them in future versions of Python.
 For regular exceptions, the traceback represents a simple path of frames,
 from the frame in which the exception was raised to the frame in which it was
 was caught or, if it hasn't been caught yet, the frame that the program's
-execution is currently in. The list is constructed by the interpreter which
-appends a frame to the traceback of the 'current exception' (the one returned
-by `sys.exc_info()`) if one exists. To support efficient appends, the links
-in a traceback's list of frames are from the oldest to the newest frame.
+execution is currently in. The list is constructed by the interpreter which,
+appends any frame it exits to the traceback of the 'current exception' if one
+exists (the exception returned by `sys.exc_info()`). To support efficient appends,
+the links in a traceback's list of frames are from the oldest to the newest frame.
 Appending a new frame is then simply a matter of inserting a new head to the
 linked list referenced from the exception's `__traceback__` field. Crucially,
-the traceback is immutable in the sense that once frames are added they are
-no longer modified.
+the traceback's frame list is immutable in the sense that frames only need to
+be added at the head, and never need to be removed.
 
 We will not need to make any changes to this data structure. The
 `__traceback__` field of the ExceptionGroup object represents that path that
@@ -503,7 +503,7 @@ the exceptions travelled through together after being joined into the
 ExceptionGroup, and the same field on each of the nested exceptions represents
 that path through which each exception arrived to the frame of the merge.
 
-What we will need to change is code that interprets and displays tracebacks,
+What we do need to change is any code that interprets and displays tracebacks,
 because it will now need to continue into tracebacks of nested exceptions
 once the traceback of an ExceptionGroup has been processed.
 
