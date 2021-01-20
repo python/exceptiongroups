@@ -539,6 +539,30 @@ errors is error prone.
 
 We can consider allowing some of them in future versions of Python.
 
+## The Traceback of an Exception Group
+
+For regular exceptions, the traceback represents a simple path of frames,
+from the frame in which the exception was raised to the frame in which it was
+was caught or, if it hasn't been caught yet, the frame that the program's
+execution is currently in. The list is constructed by the interpreter which,
+appends any frame it exits to the traceback of the 'current exception' if one
+exists (the exception returned by `sys.exc_info()`). To support efficient appends,
+the links in a traceback's list of frames are from the oldest to the newest frame.
+Appending a new frame is then simply a matter of inserting a new head to the
+linked list referenced from the exception's `__traceback__` field. Crucially,
+the traceback's frame list is immutable in the sense that frames only need to
+be added at the head, and never need to be removed.
+
+We will not need to make any changes to this data structure. The
+`__traceback__` field of the ExceptionGroup object represents that path that
+the exceptions travelled through together after being joined into the
+ExceptionGroup, and the same field on each of the nested exceptions represents
+that path through which each exception arrived to the frame of the merge.
+
+What we do need to change is any code that interprets and displays tracebacks,
+because it will now need to continue into tracebacks of nested exceptions
+once the traceback of an ExceptionGroup has been processed.
+
 ## Design Considerations
 
 ### Why try..except* syntax
@@ -698,6 +722,16 @@ to start using the new `except *` syntax right away.  They will have to use
 the new ExceptionGroup low-level APIs along with `try..except ExceptionGroup`
 to support running user code that can raise exception groups.
 
+### Traceback Representation
+
+We considered options for adapting the traceback data structure to represent
+trees, but it became apparent that a traceback tree is not meaningful once separated
+from the exceptions it refers to. While a simple-path traceback can be attached to
+any exception by a `with_traceback()` call, it is hard to imagine a case where it
+makes sense to assign a traceback tree to an exception group.  Furthermore, a
+useful display of the traceback includes information about the nested exceptions.
+For this reason we decided it is best to leave the traceback mechanism as it is
+and modify the traceback display code.
 
 ## See Also
 
