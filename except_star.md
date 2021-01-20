@@ -669,7 +669,7 @@ to support running user code that can raise exception groups.
 ### Traceback Representation
 
 We considered options for adapting the traceback data structure to represent
-trees, but it became aparent that a traceback tree is not meaninful once separated
+trees, but it became apparent that a traceback tree is not meaningful once separated
 from the exceptions it refers to. While a simple-path traceback can be attached to
 any exception by a `with_traceback()` call, it is hard to imagine a case where it
 makes sense to assign a traceback tree to an exception group.  Furthermore, a
