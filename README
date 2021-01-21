@@ -3,3 +3,4 @@ groups (also known as multi-errors) to Python 3.10. Checkout Issues
 for more information.
 
 Experimental implementation : https://github.com/iritkatriel/cpython/tree/exceptionGroup-stage4
+(PR for discussion: https://github.com/iritkatriel/cpython/pull/7)
