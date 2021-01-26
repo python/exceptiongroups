@@ -1,31 +1,65 @@
 # Introducing try..except* syntax
 
-## Disclaimer
 
-* We use the `ExceptionGroup` name, even though there
-  are other alternatives, e.g. `AggregateException` and `MultiError`.
-  Naming of the "exception group" object is out of scope of this proposal.
+## Abstract
+
+This PEP proposes language extensions that allow programs to raise and handle
+multiple unrelated exceptions simultaneously:
+
+* A new standard exception type, the `ExceptionGroup`, which represents a group
+of unrelated exceptions being propagated together.
+
+* A new keyword `except*` for handling `ExceptionGroup`s.
+
+## Motivation
+
+The interpreter is currently able to propagate at most one exception at a time.
+The chaining features introduced in PEP3134 [reference] link together exceptions
+that are related to each other as the cause or context, but there are situations
+where there are multiple unrelated exceptions that need to be propagated together
+as the stack unwinds. Several real world use cases are listed below.
+
+[TODO: flesh these out]
+* asyncio programs, trio, etc
+
+* Multiple errors from separate retries of an operation [https://bugs.python.org/issue29980]
+
+* Situations where multiple unrelated exceptiion may be of interest to calling code [https://bugs.python.org/issue40857]
+
+* Multiple teardowsn in pytest raising exceptions [https://github.com/pytest-dev/pytest/issues/8217]
+
+## Rationale
+
+Grouping several exceptions together can be done without changes to the language, simply by creating
+a container exception type. Trio is an example of a library that has made use of this technique in
+its `MultiError` type [reference to Trio MultiError]. However, such approaches require calling code
+to catch the container exception type, and then inspect it to determine the types of errors that had
+occurred, extract the ones it wants to handle and reraise the rest.
+
+Changes to the language are required in order to extend support for `ExceptionGroup`s in the style
+of existing exception handling mechanisms. At the very least we would like to be able to catch an
+`ExceptionGroup` only if it contains an exception type that we that chose to handle. Exceptions of
+other types in the same `ExceptionGroup` need to be automatically reraised, otherwise it is too easy
+for user code to inadvertently swallow exceptions that it is not handling.
+
+The purpose of this PEP, then, is to add the `except*` syntax for handling `ExceptionGroups`s in
+the interpreter, which in turn requires that `ExceptionGroup` is added as a builtin type. The
+semantics of handling `ExceptionGroup`s are not backwards compatible with the current exception
+handling semantics, so could not modify the behaviour of the `except` keyword and instead added
+the new `except*` syntax.
+
+
+## Specification
+
 
 * We use the term "naked" exception for regular Python exceptions
   **not wrapped** in an `ExceptionGroup`. E.g. a regular `ValueError`
   propagating through the stack is "naked".
 
-* `ExceptionGroup` is an iterable object.
-  E.g. `list(ExceptionGroup(ValueError('a'), TypeError('b')))` is
-  equal to `[ValueError('a'), TypeError('b')]`
-
-* `ExceptionGroup` is not an indexable object; essentially
-  it's similar to Python `set`. The motivation for this is that exceptions
-  can occur in random order, and letting users write `group[0]` to access the
-  "first" error is error prone. Although the actual implementation of
-  `ExceptionGroup` will likely use an ordered list of errors to preserve
-  the actual occurrence order for rendering.
-
 * `ExceptionGroup` is a subclass of `BaseException`,
   is assignable to `Exception.__context__`, and can be
   directly handled with `try: ... except ExceptionGroup: ...`.
 
-* The behavior of the regular `try..except` statement will not be modified.
 
 ## Syntax
 
@@ -706,6 +740,43 @@ in those tasks. Whereas handling `*CancelledError` makes sense -- it means that
 the current task is being canceled and this might be a good opportunity to do
 a cleanup.
 
+## Backwards Compatibility
+
+## Security Implications
+
+## How to Teach This
+
+## Reference Implementation
+
+[An experimental implementation](https://github.com/iritkatriel/cpython/tree/exceptionGroup-stage4).
+
+(raise in except* not supported yet).
+
+## Rejected Ideas
+
+### The ExceptionGroup API
+
+We considered making `ExceptionGroup`s iterable, so that `list(eg)` would
+produce a flattened list of the plain exceptions contained in the group.
+We decided that this would not be not be a sound API, because the metadata
+(cause, context and traceback) of the individual exceptions in a group are
+incomplete and this could create problems.  If use cases arise where this
+can be helpful, we can document (or even provide in the standard library)
+a sound recipe for accessing an individual exception: use the `project()`
+method to create an `ExceptionGroup` for a single exception and then
+transform it into a plain exception with the current metadata.
+
+### Traceback Representation
+
+We considered options for adapting the traceback data structure to represent
+trees, but it became apparent that a traceback tree is not meaningful once separated
+from the exceptions it refers to. While a simple-path traceback can be attached to
+any exception by a `with_traceback()` call, it is hard to imagine a case where it
+makes sense to assign a traceback tree to an exception group.  Furthermore, a
+useful display of the traceback includes information about the nested exceptions.
+For this reason we decided it is best to leave the traceback mechanism as it is
+and modify the traceback display code.
+
 
 ### Adoption of try..except* syntax
 
@@ -722,16 +793,6 @@ to start using the new `except *` syntax right away.  They will have to use
 the new ExceptionGroup low-level APIs along with `try..except ExceptionGroup`
 to support running user code that can raise exception groups.
 
-### Traceback Representation
-
-We considered options for adapting the traceback data structure to represent
-trees, but it became apparent that a traceback tree is not meaningful once separated
-from the exceptions it refers to. While a simple-path traceback can be attached to
-any exception by a `with_traceback()` call, it is hard to imagine a case where it
-makes sense to assign a traceback tree to an exception group.  Furthermore, a
-useful display of the traceback includes information about the nested exceptions.
-For this reason we decided it is best to leave the traceback mechanism as it is
-and modify the traceback display code.
 
 ## See Also
 
@@ -739,8 +800,6 @@ and modify the traceback display code.
   programs:
   https://github.com/python/exceptiongroups/issues/3#issuecomment-716203284
 
-* A WIP implementation of the `ExceptionGroup` type by @iritkatriel
-  tracked [here](https://github.com/iritkatriel/cpython/tree/exceptionGroup-stage4).
 
 * The issue where this concept was first formalized:
   https://github.com/python/exceptiongroups/issues/4
