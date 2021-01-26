@@ -51,14 +51,121 @@ the new `except*` syntax.
 
 ## Specification
 
+### ExceptionGroup
+
+The new builtin exception type, `ExceptionGroup` is a subclass of `BaseException`,
+so it is assignable to `Exception.__cause__` and `Exception.__context__`, and can
+be raised and handled as any exception with `raise ExceptionGroup(...)` and
+`try: ... except ExceptionGroup: ...`.
+
+Its constructor takes two parameters: a message string and a sequence of the nested
+exceptions, for example:
+`ExceptionGroup('many problems', [ValueError('bad value'), TypeError('bad type')])`.
+
+The ExceptionGroup class exposes these parameters in the the fields `msg` and
+`excs` (TODO: did we want to rename excs?).  A nested exception can also be an
+`ExceptionGroup` so the class represents a tree of exceptions (to avoid
+cyclic graph we make the `excs` field immutable?).
+
+The `ExceptionGroup.split()` method gives us a way to extract a from an `ExceptionGroup`
+a subset of the exceptions that satify a certain condition:
+
+```python
+eg = ExceptionGroup("one",
+                    [TypeError(1),
+                    ExceptionGroup("two",
+                                   [TypeError(2), ValueError(3)]])
+
+match, rest = eg.split(lambda e: isinstance(e, TypeError))
+```
+
+`match` is an exception group with the same structure as `eg`, but with only the `TypeError`
+exceptions:  `ExceptionGroup('one', [TypeError(1), ExceptionGroup('two', [TypeError(2)])])`.
+`rest` is the complement of match: `ExceptionGroup('one', [ExceptionGroup('two', [ValueError(3)])])`.
+
+Both `match` and `rest` are newly created exceptions, and the original `eg` is unchanged by the
+`split`. The metadata (cause, context and traceback) is copied from the exception groups of `eg`
+to those derived from the in `match` and `rest`.
+
+Since splitting by type is a very common use case, split also understands this as a shorthard:
+`match, rest = eg.split(TypeError)`.
+
+`split` also has a parameter that tells it to not create the `rest` exception if only the
+`match` is required:  `eg.split(TypeError, with_complement=False)`.
+
+
+#### The Traceback of and `ExceptionGroup`
+
+For regular exceptions, the traceback represents a simple path of frames,
+from the frame in which the exception was raised to the frame in which it was
+was caught or, if it hasn't been caught yet, the frame that the program's
+execution is currently in. The list is constructed by the interpreter which,
+appends any frame it exits to the traceback of the 'current exception' if one
+exists (the exception returned by `sys.exc_info()`). To support efficient appends,
+the links in a traceback's list of frames are from the oldest to the newest frame.
+Appending a new frame is then simply a matter of inserting a new head to the
+linked list referenced from the exception's `__traceback__` field. Crucially,
+the traceback's frame list is immutable in the sense that frames only need to
+be added at the head, and never need to be removed.
+
+We do not need to make any changes to this data structure. The `__traceback__`
+field of the ExceptionGroup object represents the path that the exceptions travelled
+through together after being joined into the `ExceptionGroup`, and the same field
+on each of the nested exceptions represents that path through which each
+exception arrived to the frame of the merge.
+
+What we do need to change is any code that interprets and displays tracebacks,
+because it will now need to continue into tracebacks of nested exceptions
+once the traceback of an ExceptionGroup has been processed. For example:
+
+
+```python
+def f(v):
+    try:
+        raise ValueError(v)
+    except ValueError as e:
+        return e
+
+try:
+    raise ExceptionGroup("one", [f(1)])
+except ExceptionGroup as e:
+    eg1 = e
+
+try:
+    raise ExceptionGroup("two", [f(2), eg1])
+except ExceptionGroup as e:
+    eg2 = e
+
+import traceback
+traceback.print_exception(eg2)
+
+# Output:
+
+Traceback (most recent call last):
+  File "C:\src\cpython\tmp.py", line 13, in <module>
+    raise ExceptionGroup("two", [f(2), eg1])
+ExceptionGroup: two
+   ------------------------------------------------------------
+   Traceback (most recent call last):
+     File "C:\src\cpython\tmp.py", line 3, in f
+       raise ValueError(v)
+   ValueError: 2
+   ------------------------------------------------------------
+   Traceback (most recent call last):
+     File "C:\src\cpython\tmp.py", line 8, in <module>
+       raise ExceptionGroup("one", [f(1)])
+   ExceptionGroup: one
+      ------------------------------------------------------------
+      Traceback (most recent call last):
+        File "C:\src\cpython\tmp.py", line 3, in f
+          raise ValueError(v)
+      ValueError: 1
+```
+
 
 * We use the term "naked" exception for regular Python exceptions
   **not wrapped** in an `ExceptionGroup`. E.g. a regular `ValueError`
   propagating through the stack is "naked".
-
-* `ExceptionGroup` is a subclass of `BaseException`,
-  is assignable to `Exception.__context__`, and can be
-  directly handled with `try: ... except ExceptionGroup: ...`.
 
 
 ## Syntax
@@ -573,29 +680,7 @@ errors is error prone.
 
 We can consider allowing some of them in future versions of Python.
 
-## The Traceback of an Exception Group
 
-For regular exceptions, the traceback represents a simple path of frames,
-from the frame in which the exception was raised to the frame in which it was
-was caught or, if it hasn't been caught yet, the frame that the program's
-execution is currently in. The list is constructed by the interpreter which,
-appends any frame it exits to the traceback of the 'current exception' if one
-exists (the exception returned by `sys.exc_info()`). To support efficient appends,
-the links in a traceback's list of frames are from the oldest to the newest frame.
-Appending a new frame is then simply a matter of inserting a new head to the
-linked list referenced from the exception's `__traceback__` field. Crucially,
-the traceback's frame list is immutable in the sense that frames only need to
-be added at the head, and never need to be removed.
-
-We will not need to make any changes to this data structure. The
-`__traceback__` field of the ExceptionGroup object represents that path that
-the exceptions travelled through together after being joined into the
-ExceptionGroup, and the same field on each of the nested exceptions represents
-that path through which each exception arrived to the frame of the merge.
-
-What we do need to change is any code that interprets and displays tracebacks,
-because it will now need to continue into tracebacks of nested exceptions
-once the traceback of an ExceptionGroup has been processed.
 
 ## Design Considerations
 
