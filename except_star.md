@@ -885,11 +885,22 @@ be attached to any exception by a `with_traceback()` call, it is hard to
 imagine a case where it makes sense to assign a traceback tree to an exception
 group.  Furthermore, a useful display of the traceback includes information
 about the nested exceptions. For this reason we decided it is best to leave
-the traceback mechanism as it is
-and modify the traceback display code.
+the traceback mechanism as it is and modify the traceback display code.
+
+### A full redesign of `except`
+
+We considered introducing a new keyword (such as `catch`) which can be used
+to handle both plain exceptions and `ExceptionGroup`s. Its semantics would
+be the same as those of `except*` when catching an `ExceptionGroup`, but
+it would not wrap plain a exception to create an `ExceptionGroup`. This
+would have been part of a long term plan to replace `except` by `catch`,
+but we decided that deprecating `except` in favour of an improved keyword
+is too hard at this time, and it is more realistic to introduce the
+`except*` syntax for `ExceptionGroup`s while `except` continues to be
+used for simple exceptions.
 
 
-### Adoption of try..except* syntax
+## Adoption of try..except* syntax
 
 Application code typically can dictate what version of Python it requires.
 Which makes introducing TaskGroups and the new `except *` clause somewhat
