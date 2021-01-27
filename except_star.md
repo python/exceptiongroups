@@ -45,7 +45,7 @@ for user code to inadvertently swallow exceptions that it is not handling.
 The purpose of this PEP, then, is to add the `except*` syntax for handling `ExceptionGroups`s in
 the interpreter, which in turn requires that `ExceptionGroup` is added as a builtin type. The
 semantics of handling `ExceptionGroup`s are not backwards compatible with the current exception
-handling semantics, so could not modify the behaviour of the `except` keyword and instead added
+handling semantics, so we could not modify the behaviour of the `except` keyword and instead added
 the new `except*` syntax.
 
 
