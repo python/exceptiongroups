@@ -26,7 +26,7 @@ as the stack unwinds. Several real world use cases are listed below.
 
 * Situations where multiple unrelated exceptiion may be of interest to calling code [https://bugs.python.org/issue40857]
 
-* Multiple teardowsn in pytest raising exceptions [https://github.com/pytest-dev/pytest/issues/8217]
+* Multiple teardowns in pytest raising exceptions [https://github.com/pytest-dev/pytest/issues/8217]
 
 ## Rationale
 
