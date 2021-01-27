@@ -9,7 +9,7 @@ multiple unrelated exceptions simultaneously:
 * A new standard exception type, the `ExceptionGroup`, which represents a
 group of unrelated exceptions being propagated together.
 
-* A new keyword `except*` for handling `ExceptionGroup`s.
+* A new syntax `except*` for handling `ExceptionGroup`s.
 
 ## Motivation
 
@@ -68,13 +68,16 @@ Its constructor takes two positional-only parameters: a message string and a
 sequence of the nested exceptions, for example:
 `ExceptionGroup('issues', [ValueError('bad value'), TypeError('bad type')])`.
 
-The ExceptionGroup class exposes these parameters in the the fields `msg` and
-`excs` (TODO: did we want to rename excs?).  A nested exception can also be an
-`ExceptionGroup` so the class represents a tree of exceptions (to avoid
-cyclic graph we make the `excs` field immutable?).
+The `ExceptionGroup` class exposes these parameters in the fields `message`
+and `errors`.  A nested exception can also be an `ExceptionGroup` so the class
+represents a tree of exceptions, where the leaves are plain exceptions and
+each internal node represent a time at which the program grouped some
+unrelated exceptions into a new `ExceptionGroup`.
 
-The `ExceptionGroup.split()` method gives us a way to extract a from an
-`ExceptionGroup` a subset of the exceptions that satify a certain condition:
+The `ExceptionGroup.subgroup(condition)` method gives us a way to obtain an
+`ExceptionGroup` that has the same metadata (cause, context, traceback) as
+the original group, but contains only those exceptions for which the condition
+is true:
 
 ```python
 eg = ExceptionGroup("one",
@@ -82,25 +85,33 @@ eg = ExceptionGroup("one",
                      ExceptionGroup("two",
                                     [TypeError(2), ValueError(3)])])
 
-match, rest = eg.split(lambda e: isinstance(e, TypeError))
+type_errors = eg.subgroup(lambda e: isinstance(e, TypeError))
 ```
 
-`match` is an exception group with the same structure as `eg`, but with only
-the `TypeError` exceptions:
+The value of `type_errors` is:
 `ExceptionGroup('one', [TypeError(1), ExceptionGroup('two', [TypeError(2)])])`.
-`rest` is the complement of match:
+
+If both the subgroup and its complement are needed, the `ExceptionGroup.split`
+method can be used:
+
+```
+type_errors, other_errors = eg.subgroup(lambda e: isinstance(e, TypeError))
+```
+
+Now `type_errors` is the same as above, and `other_errors` is the complement:
 `ExceptionGroup('one', [ExceptionGroup('two', [ValueError(3)])])`.
 
-Both `match` and `rest` are newly created exceptions, and the original `eg` is
-unchanged by the `split`. The metadata (cause, context and traceback) is
-copied from the exception groups of `eg` to those derived from the in `match`
-and `rest`.
+The original `eg` is unchanged by `subgroup` or `split`. If it, or any
+nested `ExceptionGroup` is not included in the result in full, a new
+`ExceptionGroup` is created, containing a subset of the exceptions in
+its `errors` list. This partition is done recursively, so potentially
+the entire `ExceptionTree` is copied. There is no need to copy the leaf
+exceptions and the metadata elements (cause, context, traceback).
 
-Since splitting by type is a very common use case, split also understands this
-as a shorthard: `match, rest = eg.split(TypeError)`.
-
-`split` also has a parameter that tells it to not create the `rest` exception
-if only the `match` is required: `eg.split(TypeError, with_complement=False)`.
+Since splitting by exception type is a very common use case, `subgroup` and
+`split` also understand this as a shorthard:
+`match, rest = eg.split(TypeError)`, so if the condition is an exception type,
+it is checked with `isinstance` rather than being treated as a callable.
 
 
 #### The Traceback of and `ExceptionGroup`
@@ -109,13 +120,14 @@ For regular exceptions, the traceback represents a simple path of frames,
 from the frame in which the exception was raised to the frame in which it was
 was caught or, if it hasn't been caught yet, the frame that the program's
 execution is currently in. The list is constructed by the interpreter which,
-appends any frame it exits to the traceback of the 'current exception' if one
-exists (the exception returned by `sys.exc_info()`). To support efficient
-appends, the links in a traceback's list of frames are from the oldest to the
-newest frame. Appending a new frame is then simply a matter of inserting a new
-head to the linked list referenced from the exception's `__traceback__` field.
-Crucially, the traceback's frame list is immutable in the sense that frames
-only need to be added at the head, and never need to be removed.
+appends any frame from which it exits to the traceback of the 'current
+exception' if one exists (the exception returned by `sys.exc_info()`). To
+support efficient appends, the links in a traceback's list of frames are from
+the oldest to the newest frame. Appending a new frame is then simply a matter
+of inserting a new head to the linked list referenced from the exception's
+`__traceback__` field. Crucially, the traceback's frame list is immutable in
+the sense that frames only need to be added at the head, and never need to be
+removed.
 
 We do not need to make any changes to this data structure. The `__traceback__`
 field of the ExceptionGroup object represents the path that the exceptions
@@ -172,7 +184,7 @@ ExceptionGroup: two
 ```
 
 
-* We use the term "naked" exception for regular Python exceptions
+ We use the term "naked" exception for regular Python exceptions
   **not wrapped** in an `ExceptionGroup`. E.g. a regular `ValueError`
   propagating through the stack is "naked".
 
@@ -860,7 +872,7 @@ We decided that this would not be not be a sound API, because the metadata
 (cause, context and traceback) of the individual exceptions in a group are
 incomplete and this could create problems.  If use cases arise where this
 can be helpful, we can document (or even provide in the standard library)
-a sound recipe for accessing an individual exception: use the `project()`
+a sound recipe for accessing an individual exception: use the `split()`
 method to create an `ExceptionGroup` for a single exception and then
 transform it into a plain exception with the current metadata.
 
