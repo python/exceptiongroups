@@ -835,7 +835,7 @@ a cleanup.
 
 [An experimental implementation](https://github.com/iritkatriel/cpython/tree/exceptionGroup-stage4).
 
-(raise in except* not supported yet).
+(`raise` in `except*` not supported yet).
 
 ## Rejected Ideas
 
