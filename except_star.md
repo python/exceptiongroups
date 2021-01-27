@@ -6,92 +6,101 @@
 This PEP proposes language extensions that allow programs to raise and handle
 multiple unrelated exceptions simultaneously:
 
-* A new standard exception type, the `ExceptionGroup`, which represents a group
-of unrelated exceptions being propagated together.
+* A new standard exception type, the `ExceptionGroup`, which represents a
+group of unrelated exceptions being propagated together.
 
 * A new keyword `except*` for handling `ExceptionGroup`s.
 
 ## Motivation
 
-The interpreter is currently able to propagate at most one exception at a time.
-The chaining features introduced in PEP3134 [reference] link together exceptions
-that are related to each other as the cause or context, but there are situations
-where there are multiple unrelated exceptions that need to be propagated together
-as the stack unwinds. Several real world use cases are listed below.
+The interpreter is currently able to propagate at most one exception at a
+time. The chaining features introduced in PEP3134 [reference] link together
+exceptions that are related to each other as the cause or context, but there
+are situations where there are multiple unrelated exceptions that need to be
+propagated together as the stack unwinds. Several real world use cases are
+listed below.
 
 [TODO: flesh these out]
 * asyncio programs, trio, etc
 
 * Multiple errors from separate retries of an operation [https://bugs.python.org/issue29980]
 
-* Situations where multiple unrelated exceptiion may be of interest to calling code [https://bugs.python.org/issue40857]
+* Situations where multiple unrelated exceptions may be of interest to calling code [https://bugs.python.org/issue40857]
 
 * Multiple teardowns in pytest raising exceptions [https://github.com/pytest-dev/pytest/issues/8217]
 
 ## Rationale
 
-Grouping several exceptions together can be done without changes to the language, simply by creating
-a container exception type. Trio is an example of a library that has made use of this technique in
-its `MultiError` type [reference to Trio MultiError]. However, such approaches require calling code
-to catch the container exception type, and then inspect it to determine the types of errors that had
-occurred, extract the ones it wants to handle and reraise the rest.
+Grouping several exceptions together can be done without changes to the
+language, simply by creating a container exception type. Trio is an example of
+a library that has made use of this technique in its `MultiError` type
+[reference to Trio MultiError]. However, such approaches require calling code
+to catch the container exception type, and then inspect it to determine the
+types of errors that had occurred, extract the ones it wants to handle and
+reraise the rest.
 
-Changes to the language are required in order to extend support for `ExceptionGroup`s in the style
-of existing exception handling mechanisms. At the very least we would like to be able to catch an
-`ExceptionGroup` only if it contains an exception type that we that chose to handle. Exceptions of
-other types in the same `ExceptionGroup` need to be automatically reraised, otherwise it is too easy
-for user code to inadvertently swallow exceptions that it is not handling.
+Changes to the language are required in order to extend support for
+`ExceptionGroup`s in the style of existing exception handling mechanisms. At
+the very least we would like to be able to catch an `ExceptionGroup` only if
+it contains an exception type that we that chose to handle. Exceptions of
+other types in the same `ExceptionGroup` need to be automatically reraised,
+otherwise it is too easy for user code to inadvertently swallow exceptions
+that it is not handling.
 
-The purpose of this PEP, then, is to add the `except*` syntax for handling `ExceptionGroups`s in
-the interpreter, which in turn requires that `ExceptionGroup` is added as a builtin type. The
-semantics of handling `ExceptionGroup`s are not backwards compatible with the current exception
-handling semantics, so we could not modify the behaviour of the `except` keyword and instead added
-the new `except*` syntax.
+The purpose of this PEP, then, is to add the `except*` syntax for handling
+`ExceptionGroups`s in the interpreter, which in turn requires that
+`ExceptionGroup` is added as a builtin type. The semantics of handling
+`ExceptionGroup`s are not backwards compatible with the current exception
+handling semantics, so we could not modify the behaviour of the `except`
+keyword and instead added the new `except*` syntax.
 
 
 ## Specification
 
 ### ExceptionGroup
 
-The new builtin exception type, `ExceptionGroup` is a subclass of `BaseException`,
-so it is assignable to `Exception.__cause__` and `Exception.__context__`, and can
-be raised and handled as any exception with `raise ExceptionGroup(...)` and
-`try: ... except ExceptionGroup: ...`.
+The new builtin exception type, `ExceptionGroup` is a subclass of
+`BaseException`, so it is assignable to `Exception.__cause__` and
+`Exception.__context__`, and can be raised and handled as any exception
+with `raise ExceptionGroup(...)` and `try: ... except ExceptionGroup: ...`.
 
-Its constructor takes two positional-only parameters: a message string and a sequence of the nested
-exceptions, for example:
-`ExceptionGroup('many problems', [ValueError('bad value'), TypeError('bad type')])`.
+Its constructor takes two positional-only parameters: a message string and a
+sequence of the nested exceptions, for example:
+`ExceptionGroup('issues', [ValueError('bad value'), TypeError('bad type')])`.
 
 The ExceptionGroup class exposes these parameters in the the fields `msg` and
 `excs` (TODO: did we want to rename excs?).  A nested exception can also be an
 `ExceptionGroup` so the class represents a tree of exceptions (to avoid
 cyclic graph we make the `excs` field immutable?).
 
-The `ExceptionGroup.split()` method gives us a way to extract a from an `ExceptionGroup`
-a subset of the exceptions that satify a certain condition:
+The `ExceptionGroup.split()` method gives us a way to extract a from an
+`ExceptionGroup` a subset of the exceptions that satify a certain condition:
 
 ```python
 eg = ExceptionGroup("one",
                     [TypeError(1),
                      ExceptionGroup("two",
-                                    [TypeError(2), ValueError(3)]])
+                                    [TypeError(2), ValueError(3)])])
 
 match, rest = eg.split(lambda e: isinstance(e, TypeError))
 ```
 
-`match` is an exception group with the same structure as `eg`, but with only the `TypeError`
-exceptions:  `ExceptionGroup('one', [TypeError(1), ExceptionGroup('two', [TypeError(2)])])`.
-`rest` is the complement of match: `ExceptionGroup('one', [ExceptionGroup('two', [ValueError(3)])])`.
+`match` is an exception group with the same structure as `eg`, but with only
+the `TypeError` exceptions:
+`ExceptionGroup('one', [TypeError(1), ExceptionGroup('two', [TypeError(2)])])`.
+`rest` is the complement of match:
+`ExceptionGroup('one', [ExceptionGroup('two', [ValueError(3)])])`.
 
-Both `match` and `rest` are newly created exceptions, and the original `eg` is unchanged by the
-`split`. The metadata (cause, context and traceback) is copied from the exception groups of `eg`
-to those derived from the in `match` and `rest`.
+Both `match` and `rest` are newly created exceptions, and the original `eg` is
+unchanged by the `split`. The metadata (cause, context and traceback) is
+copied from the exception groups of `eg` to those derived from the in `match`
+and `rest`.
 
-Since splitting by type is a very common use case, split also understands this as a shorthard:
-`match, rest = eg.split(TypeError)`.
+Since splitting by type is a very common use case, split also understands this
+as a shorthard: `match, rest = eg.split(TypeError)`.
 
-`split` also has a parameter that tells it to not create the `rest` exception if only the
-`match` is required:  `eg.split(TypeError, with_complement=False)`.
+`split` also has a parameter that tells it to not create the `rest` exception
+if only the `match` is required: `eg.split(TypeError, with_complement=False)`.
 
 
 #### The Traceback of and `ExceptionGroup`
@@ -101,18 +110,18 @@ from the frame in which the exception was raised to the frame in which it was
 was caught or, if it hasn't been caught yet, the frame that the program's
 execution is currently in. The list is constructed by the interpreter which,
 appends any frame it exits to the traceback of the 'current exception' if one
-exists (the exception returned by `sys.exc_info()`). To support efficient appends,
-the links in a traceback's list of frames are from the oldest to the newest frame.
-Appending a new frame is then simply a matter of inserting a new head to the
-linked list referenced from the exception's `__traceback__` field. Crucially,
-the traceback's frame list is immutable in the sense that frames only need to
-be added at the head, and never need to be removed.
+exists (the exception returned by `sys.exc_info()`). To support efficient
+appends, the links in a traceback's list of frames are from the oldest to the
+newest frame. Appending a new frame is then simply a matter of inserting a new
+head to the linked list referenced from the exception's `__traceback__` field.
+Crucially, the traceback's frame list is immutable in the sense that frames
+only need to be added at the head, and never need to be removed.
 
 We do not need to make any changes to this data structure. The `__traceback__`
-field of the ExceptionGroup object represents the path that the exceptions travelled
-through together after being joined into the `ExceptionGroup`, and the same field
-on each of the nested exceptions represents that path through which each
-exception arrived to the frame of the merge.
+field of the ExceptionGroup object represents the path that the exceptions
+travelled through together after being joined into the `ExceptionGroup`, and
+the same field on each of the nested exceptions represents that path through
+which each exception arrived to the frame of the merge.
 
 What we do need to change is any code that interprets and displays tracebacks,
 because it will now need to continue into tracebacks of nested exceptions
@@ -308,27 +317,29 @@ will be raised in the except* blocks: a "reraised" list for the naked raises
 and a "raised" list of the parameterised raises.
 
 * Every `except *` clause, run from top to bottom, can match a subset of the
-  exceptions out of the group forming a "working set" of errors for the current
-  clause.  These exceptions are removed from the "incoming" group. If the except
-  block raises an exception, that exception is added to the appropriate result
-  list ("raised" or "reraised"), and in the case of "raise" it gets its
-  "working set" of errors linked to it via the `__context__` attribute.
+  exceptions out of the group forming a "working set" of errors for the
+  current clause.  These exceptions are removed from the "incoming" group.
+  If the except block raises an exception, that exception is added to the
+  appropriate result list ("raised" or "reraised"), and in the case of "raise"
+  it gets its "working set" of errors linked to it via the `__context__`
+  attribute.
 
 * After there are no more `except*` clauses to evaluate, there are the
   following possibilities:
 
-* Both the "incoming" `ExceptionGroup` and the two result lists are empty. This
-means that all exceptions were processed and silenced.
+* Both the "incoming" `ExceptionGroup` and the two result lists are empty.
+This means that all exceptions were processed and silenced.
 
 * The "incoming" `ExceptionGroup` is non-empty but the result lists are:
-not all exceptions were processed. The interpreter raises the "incoming" group.
+not all exceptions were processed. The interpreter raises the "incoming"
+group.
 
 * At least one of the result lists is non-empty: there are exceptions raised
-from the except* clauses. The interpreter constructs a new `ExceptionGroup` with
-an empty message and an exception list that contains all exceptions in "raised"
-in addition to a single ExceptionGroup which holds the exceptions in "reraised"
-and "incoming", in the same nested structure and with the same metadata as in
-the original incoming exception.
+from the except* clauses. The interpreter constructs a new `ExceptionGroup`
+with an empty message and an exception list that contains all exceptions in
+"raised" in addition to a single ExceptionGroup which holds the exceptions in
+"reraised" and "incoming", in the same nested structure and with the same
+metadata as in the original incoming exception.
 
 
 
@@ -368,8 +379,8 @@ except *OSerror as errors:
 The above code ignores all `EPIPE` OS errors, while letting all other
 exceptions propagate.
 
-Raising exceptions while handling an `ExceptionGroup` introduces nesting because
-the traceback and chaining information needs to be maintained:
+Raising exceptions while handling an `ExceptionGroup` introduces nesting
+because the traceback and chaining information needs to be maintained:
 
 ```python
 try:
@@ -393,8 +404,9 @@ except *ValueError:
 #   )
 ```
 
-A regular `raise Exception` would not wrap `Exception` in its own group, but a new group would still be
-created to merged it with the ExceptionGroup of unhandled exceptions:
+A regular `raise Exception` would not wrap `Exception` in its own group, but a
+new group would still be created to merged it with the ExceptionGroup of
+unhandled exceptions:
 
 ```python
 try:
@@ -413,9 +425,10 @@ except *ValueError:
 
 ### Exception Chaining
 
-If an error occurs during processing a set of exceptions in a `except *` block,
-all matched errors would be put in a new `ExceptionGroup` which would be
-referenced from the just occurred exception via its `__context__` attribute:
+If an error occurs during processing a set of exceptions in a `except *`
+block, all matched errors would be put in a new `ExceptionGroup` which would
+be referenced from the just occurred exception via its `__context__`
+attribute:
 
 ```python
 try:
@@ -854,12 +867,13 @@ transform it into a plain exception with the current metadata.
 ### Traceback Representation
 
 We considered options for adapting the traceback data structure to represent
-trees, but it became apparent that a traceback tree is not meaningful once separated
-from the exceptions it refers to. While a simple-path traceback can be attached to
-any exception by a `with_traceback()` call, it is hard to imagine a case where it
-makes sense to assign a traceback tree to an exception group.  Furthermore, a
-useful display of the traceback includes information about the nested exceptions.
-For this reason we decided it is best to leave the traceback mechanism as it is
+trees, but it became apparent that a traceback tree is not meaningful once
+separated from the exceptions it refers to. While a simple-path traceback can
+be attached to any exception by a `with_traceback()` call, it is hard to
+imagine a case where it makes sense to assign a traceback tree to an exception
+group.  Furthermore, a useful display of the traceback includes information
+about the nested exceptions. For this reason we decided it is best to leave
+the traceback mechanism as it is
 and modify the traceback display code.
 
 
