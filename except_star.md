@@ -73,8 +73,8 @@ a subset of the exceptions that satify a certain condition:
 ```python
 eg = ExceptionGroup("one",
                     [TypeError(1),
-                    ExceptionGroup("two",
-                                   [TypeError(2), ValueError(3)]])
+                     ExceptionGroup("two",
+                                    [TypeError(2), ValueError(3)]])
 
 match, rest = eg.split(lambda e: isinstance(e, TypeError))
 ```
