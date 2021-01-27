@@ -58,7 +58,7 @@ so it is assignable to `Exception.__cause__` and `Exception.__context__`, and ca
 be raised and handled as any exception with `raise ExceptionGroup(...)` and
 `try: ... except ExceptionGroup: ...`.
 
-Its constructor takes two parameters: a message string and a sequence of the nested
+Its constructor takes two positional-only parameters: a message string and a sequence of the nested
 exceptions, for example:
 `ExceptionGroup('many problems', [ValueError('bad value'), TypeError('bad type')])`.
 
