@@ -184,12 +184,8 @@ ExceptionGroup: two
 ```
 
 
- We use the term "naked" exception for regular Python exceptions
-  **not wrapped** in an `ExceptionGroup`. E.g. a regular `ValueError`
-  propagating through the stack is "naked".
+### except*
 
-
-## Syntax
 
 We're proposing to introduce a new variant of the `try..except` syntax to
 simplify working with exception groups:
@@ -211,18 +207,20 @@ processed by one `except *` clause.
 
 ## Semantics
 
-### Overview
+ In the following we use the term "naked" exception for regular Python
+ exceptions **not wrapped** in an `ExceptionGroup`. E.g. a regular
+ `ValueError` propagating through the stack is "naked".
 
 The `except *SpamError` block will be run if the `try` code raised an
 `ExceptionGroup` with one or more instances of `SpamError`. It would also be
 triggered if a naked instance of  `SpamError` was raised.
 
 The `except *BazError as e` block would create an ExceptionGroup with the
-same nested structure and metadata (msg, cause and context) as the one
-raised, but containing only the instances of `BazError`. This ExceptionGroup
-is assigned to `e`. The type of `e` would be `ExceptionGroup[BazError]`.
-If there was just one naked instance of `BazError`, it would be wrapped
-into an `ExceptionGroup` and assigned to `e`.
+same nested structure and metadata (msg, cause, context and traceback) as the
+one raised, but containing only the instances of `BazError`. This
+`ExceptionGroup` is assigned to `e`. The type of `e` would be
+`ExceptionGroup[BazError]`. If there was just one naked instance of `BazError`,
+it would be wrapped into an `ExceptionGroup` and assigned to `e`.
 
 The `except *(BarError, FooError) as e` would split out all instances of
 `BarError` or `FooError`  into such an ExceptionGroup and assign it to `e`.
@@ -271,12 +269,12 @@ Exceptions are matched using a subclass check. For example:
 ```python
 try:
   low_level_os_operation()
-except *OSerror as errors:
-  for e in errors:
+except *OSerror as eg:
+  for e in eg.errors:
     print(type(e).__name__)
 ```
 
-would output:
+could output:
 
 ```
 BlockingIOError
@@ -293,7 +291,7 @@ Example:
 ```python
 try:
   raise ExceptionGroup(
-    "msg", ValueError('a'), TypeError('b'), TypeError('c'), KeyError('e')
+    "msg", [ValueError('a'), TypeError('b'), TypeError('c'), KeyError('e')]
   )
 except *ValueError as e:
   print(f'got some ValueErrors: {e}')
@@ -305,8 +303,8 @@ except *TypeError as e:
 The above code would print:
 
 ```
-got some ValueErrors: ExceptionGroup("msg", ValueError('a'))
-got some TypeErrors: ExceptionGroup("msg", TypeError('b'), TypeError('c'))
+got some ValueErrors: ExceptionGroup("msg", [ValueError('a')])
+got some TypeErrors: ExceptionGroup("msg", TypeError[('b'), TypeError('c')])
 ```
 
 and then terminate with an unhandled `ExceptionGroup`:
@@ -314,9 +312,9 @@ and then terminate with an unhandled `ExceptionGroup`:
 ```
 ExceptionGroup(
   "msg",
-  TypeError('b'),
-  TypeError('c'),
-  KeyError('e'),
+  [TypeError('b'),
+   TypeError('c'),
+   KeyError('e')]
 )
 ```
 
@@ -373,19 +371,15 @@ except *BlockingIOError:
 #   ExceptionGroup(BlockingIOError())
 ```
 
-### Raising ExceptionGroups manually
+### Raising ExceptionGroups explicitly
 
-Exception groups can be created and raised as follows:
+Exception groups can be derived from other exception groups and raised as follows:
 
 ```python
 try:
   low_level_os_operation()
 except *OSerror as errors:
-  new_errors = []
-  for e in errors:
-    if e.errno != errno.EPIPE:
-       new_errors.append(e)
-  raise ExceptionGroup(errors.msg, *new_errors)
+  raise errors.subgroup(lambda e: e.errno != errno.EPIPE)
 ```
 
 The above code ignores all `EPIPE` OS errors, while letting all other
@@ -396,9 +390,9 @@ because the traceback and chaining information needs to be maintained:
 
 ```python
 try:
-  raise ExceptionGroup("one", ValueError('a'), TypeError('b'))
+  raise ExceptionGroup("one", [ValueError('a'), TypeError('b')])
 except *ValueError:
-  raise ExceptionGroup("two", KeyError('x'), KeyError('y'))
+  raise ExceptionGroup("two", [KeyError('x'), KeyError('y')])
 
 # would result in:
 #
@@ -406,12 +400,12 @@ except *ValueError:
 #     "",
 #     ExceptionGroup(    <-- context = ExceptionGroup(ValueError('a'))
 #       "two",
-#       KeyError('x'),
-#       KeyError('y'),
+#       [KeyError('x'),
+#        KeyError('y')],
 #     ),
 #     ExceptionGroup(    <-- context, cause, tb same as the original "one"
 #       "one",
-#       TypeError('b'),
+#       [TypeError('b')],
 #     )
 #   )
 ```
@@ -422,7 +416,7 @@ unhandled exceptions:
 
 ```python
 try:
-  raise ExceptionGroup("eg", ValueError('a'), TypeError('b'))
+  raise ExceptionGroup("eg", [ValueError('a'), TypeError('b')])
 except *ValueError:
   raise KeyError('x')
 
@@ -431,7 +425,7 @@ except *ValueError:
 #   ExceptionGroup(
 #     "",
 #     KeyError('x'),
-#     ExceptionGroup("eg", TypeError('b'))
+#     ExceptionGroup("eg", [TypeError('b')])
 #   )
 ```
 
@@ -444,7 +438,7 @@ attribute:
 
 ```python
 try:
-  raise ExceptionGroup("eg", ValueError('a'), ValueError('b'), TypeError('z'))
+  raise ExceptionGroup("eg", [ValueError('a'), ValueError('b'), TypeError('z')])
 except *ValueError:
   1 / 0
 
@@ -452,11 +446,11 @@ except *ValueError:
 #
 #   ExceptionGroup(
 #     "",
-#     ExceptionGroup(
+#     [ExceptionGroup(
 #       "eg",
-#       TypeError('z'),
-#     ),
-#     ZeroDivisionError()
+#       [TypeError('z')],
+#      ),
+#      ZeroDivisionError()]
 #   )
 #
 # where the `ZeroDivisionError()` instance would have
@@ -464,8 +458,7 @@ except *ValueError:
 #
 #   ExceptionGroup(
 #     "eg",
-#     ValueError('a'),
-#     ValueError('b')
+#     [ValueError('a'), ValueError('b')]
 #   )
 ```
 
@@ -480,11 +473,13 @@ except *ValueError as errors:
 # would result in:
 #
 #   ExceptionGroup(
-#     ExceptionGroup(
+#     "",
+#     [ExceptionGroup(
 #       "eg",
-#       TypeError('z'),
-#     ),
-#     RuntimeError('unexpected values')
+#       [TypeError('z')],
+#      ),
+#      RuntimeError('unexpected values')
+#     ]
 #   )
 #
 # where the `RuntimeError()` instance would have
@@ -492,27 +487,23 @@ except *ValueError as errors:
 #
 #   ExceptionGroup(
 #      "eg",
-#     ValueError('a'),
-#     ValueError('b')
+#      [ValueError('a'), ValueError('b')]
 #   )
 ```
 
 ### Recursive Matching
 
 The matching of `except *` clauses against an `ExceptionGroup` is performed
-recursively. E.g.:
+recursively, using the `ExceptionGroup.split()` method. E.g.:
 
 ```python
 try:
   raise ExceptionGroup(
     "eg",
-    ValueError('a'),
-    TypeError('b'),
-    ExceptionGroup(
-	  "nested",
-      TypeError('c'),
-      KeyError('d')
-    )
+    [ValueError('a'),
+     TypeError('b'),
+     ExceptionGroup("nested", [TypeError('c'), KeyError('d')])
+    ]
   )
 except *TypeError as e:
   print(f'e = {e}')
@@ -521,32 +512,9 @@ except *Exception:
 
 # would print:
 #
-#  e = ExceptionGroup("eg", TypeError('b'), ExceptionGroup("nested", TypeError('c'))
+#  e = ExceptionGroup("eg", [TypeError('b'), ExceptionGroup("nested", [TypeError('c')])])
 ```
 
-Iteration over an `ExceptionGroup` that has nested `ExceptionGroup` objects
-in it effectively flattens the entire tree. E.g.
-
-```python
-print(
-  list(
-    ExceptionGroup(
-	  "eg",
-      ValueError('a'),
-      TypeError('b'),
-      ExceptionGroup(
-	    "nested",
-        TypeError('c'),
-        KeyError('d')
-      )
-    )
-  )
-)
-
-# would output:
-#
-#   [ValueError('a'), TypeError('b'), TypeError('c'), KeyError('d')]
-```
 
 ### Re-raising ExceptionGroups
 
@@ -559,13 +527,10 @@ likely get lost:
 try:
   raise ExceptionGroup(
     "top",
-    ValueError('a'),
-    TypeError('b'),
-    ExceptionGroup(
-	  "nested",
-      TypeError('c'),
-      KeyError('d')
-    )
+    [ValueError('a'),
+     TypeError('b'),
+     ExceptionGroup("nested",[TypeError('c'), KeyError('d')])
+    ]
   )
 except *TypeError as e:
   e.foo = 'bar'
@@ -573,43 +538,6 @@ except *TypeError as e:
   #              destroyed after the `except*` clause.
 ```
 
-If the user wants to "flatten" the tree, they can explicitly create a new
-`ExceptionGroup` and raise it:
-
-
-```python
-try:
-  raise ExceptionGroup(
-    "one",
-    ValueError('a'),
-    TypeError('b'),
-    ExceptionGroup(
-	  "two",
-      TypeError('c'),
-      KeyError('d')
-    )
-  )
-except *TypeError as e:
-  raise ExceptionGroup("three", *e)
-
-# would terminate with:
-#
-#  ExceptionGroup(
-#    "three",
-#    ExceptionGroup(
-#      TypeError('b'),
-#      TypeError('c'),
-#    ),
-#    ExceptionGroup(
-#        "one",
-#        ValueError('a'),
-#        ExceptionGroup(
-#            "two",
-#            KeyError('d')
-#        )
-#    )
-#  )
-```
 
 With the regular exceptions, there's a subtle difference between `raise e`
 and a bare `raise`:
@@ -638,39 +566,64 @@ This difference is preserved with exception groups:
 * The `raise` form re-raises all exceptions from the group *without recording
   the current frame in their tracebacks*.
 
-* The `raise e` form re-raises all exceptions from the group with tracebacks
+* The `raise e` form re-raises the `ExceptionGroup` `e` with its traceback
   updated to point out to the current frame, effectively resulting in user
   seeing the `raise e` line in their tracebacks.
 
-That said, both forms would not affect the overall shape of the exception
-group:
+After all `except *` blocks have been processed, the remaning unhandled
+exceptions are merged together with the raised and re-reaised exceptions,
+and the manner in which this is done depends on what the traceback needs
+to contain: in the case of `raise e`, we have a new `ExceptionGroup` that
+is merged with the unhandled `ExceptionGroup`, whereas in the case of
+a naked `raise` we retain the re-reaised exceptions as if they were
+unhandled:
 
 ```python
-try:
-  raise ExceptionGroup(
-    "one",
-    ValueError('a'),
-    TypeError('b'),
-    ExceptionGroup(
-      "two",
-      TypeError('c'),
-      KeyError('d')
-    )
-  )
-except *TypeError as e:
-  raise  # or "raise e"
 
-# would both terminate with:
+eg = raise ExceptionGroup(
+    "one",
+    [ValueError('a'),
+     TypeError('b'),
+     ExceptionGroup("two", [TypeError('c'), KeyError('d')])
+    ]
+  )
+
+try:
+  raise eg
+except *TypeError as e:
+  raise
+
+# would terminate with:
 #
 #  ExceptionGroup(
 #    "one",
-#    ValueError('a'),
-#    TypeError('b'),
+#    [ValueError('a'),
+#     TypeError('b'),
+#     ExceptionGroup("two", [TypeError('c'), KeyError('d')])
+#    ]
+#  )
+
+try:
+  raise eg:
+except *TypeError as e:
+  raise e
+
+# would terminate with the following, where the re-raised exception
+# (which has a different traceback now) is merged with the unhandled
+# exceptions into a new `ExceptionGroup`:
+#
+#  ExceptionGroup(
+#    "",
+#    [ExceptionGroup(
+#      "one",
+#      [ValueError('a'),
+#       ExceptionGroup("two", [KeyError('d')]),
 #    ExceptionGroup(
-#      "two",
-#      TypeError('c'),
-#      KeyError('d')
-#    )
+#      "one",
+#      [TypeError('b'),
+#       ExceptionGroup("two", [TypeError('c')])
+#      ]),
+#    ]
 #  )
 ```
 
@@ -852,6 +805,24 @@ a cleanup.
 
 ## Backwards Compatibility
 
+The behaviour of `except` is unchanged so existing code will continue to work.
+
+### Adoption of try..except* syntax
+
+Application code typically can dictate what version of Python it requires.
+Which makes introducing TaskGroups and the new `except *` clause somewhat
+straightforward. Upon switching to Python 3.10, the application developer
+can grep their application code for every *control flow* exception they handle
+(search for `except CancelledError`) and mechanically change it to
+`except *CancelledError`.
+
+Library developers, on the other hand, will need to maintain backwards
+compatibility with older Python versions, and therefore they wouldn't be able
+to start using the new `except *` syntax right away.  They will have to use
+the new ExceptionGroup low-level APIs along with `try..except ExceptionGroup`
+to support running user code that can raise exception groups.
+
+
 ## Security Implications
 
 ## How to Teach This
@@ -900,28 +871,19 @@ to introduce the `except*` syntax for `ExceptionGroup`s while `except`
 continues to be used for simple exceptions.
 
 
-## Adoption of try..except* syntax
-
-Application code typically can dictate what version of Python it requires.
-Which makes introducing TaskGroups and the new `except *` clause somewhat
-straightforward. Upon switching to Python 3.10, the application developer
-can grep their application code for every *control flow* exception they handle
-(search for `except CancelledError`) and mechanically change it to
-`except *CancelledError`.
-
-Library developers, on the other hand, will need to maintain backwards
-compatibility with older Python versions, and therefore they wouldn't be able
-to start using the new `except *` syntax right away.  They will have to use
-the new ExceptionGroup low-level APIs along with `try..except ExceptionGroup`
-to support running user code that can raise exception groups.
-
-
 ## See Also
 
 * An analysis of how exception groups will likely be used in asyncio
   programs:
   https://github.com/python/exceptiongroups/issues/3#issuecomment-716203284
 
-
-* The issue where this concept was first formalized:
+  * The issue where this concept was first formalized:
   https://github.com/python/exceptiongroups/issues/4
+
+
+## References
+
+## Copyright
+
+This document is placed in the public domain or under the
+CC0-1.0-Universal license, whichever is more permissive.
