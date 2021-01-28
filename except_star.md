@@ -894,10 +894,10 @@ to handle both plain exceptions and `ExceptionGroup`s. Its semantics would
 be the same as those of `except*` when catching an `ExceptionGroup`, but
 it would not wrap plain a exception to create an `ExceptionGroup`. This
 would have been part of a long term plan to replace `except` by `catch`,
-but we decided that deprecating `except` in favour of an improved keyword
-is too hard at this time, and it is more realistic to introduce the
-`except*` syntax for `ExceptionGroup`s while `except` continues to be
-used for simple exceptions.
+but we decided that deprecating `except` in favour of an enhanced keyword
+would be too confusing for users at this time, so it is more appropriate
+to introduce the `except*` syntax for `ExceptionGroup`s while `except`
+continues to be used for simple exceptions.
 
 
 ## Adoption of try..except* syntax
