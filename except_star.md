@@ -1,33 +1,191 @@
 # Introducing try..except* syntax
 
-## Disclaimer
 
-* We use the `ExceptionGroup` name, even though there
-  are other alternatives, e.g. `AggregateException` and `MultiError`.
-  Naming of the "exception group" object is out of scope of this proposal.
+## Abstract
 
-* We use the term "naked" exception for regular Python exceptions
-  **not wrapped** in an `ExceptionGroup`. E.g. a regular `ValueError`
-  propagating through the stack is "naked".
+This PEP proposes language extensions that allow programs to raise and handle
+multiple unrelated exceptions simultaneously:
 
-* `ExceptionGroup` is an iterable object.
-  E.g. `list(ExceptionGroup(ValueError('a'), TypeError('b')))` is
-  equal to `[ValueError('a'), TypeError('b')]`
+* A new standard exception type, the `ExceptionGroup`, which represents a
+group of unrelated exceptions being propagated together.
 
-* `ExceptionGroup` is not an indexable object; essentially
-  it's similar to Python `set`. The motivation for this is that exceptions
-  can occur in random order, and letting users write `group[0]` to access the
-  "first" error is error prone. Although the actual implementation of
-  `ExceptionGroup` will likely use an ordered list of errors to preserve
-  the actual occurrence order for rendering.
+* A new syntax `except*` for handling `ExceptionGroup`s.
 
-* `ExceptionGroup` is a subclass of `BaseException`,
-  is assignable to `Exception.__context__`, and can be
-  directly handled with `try: ... except ExceptionGroup: ...`.
+## Motivation
 
-* The behavior of the regular `try..except` statement will not be modified.
+The interpreter is currently able to propagate at most one exception at a
+time. The chaining features introduced in PEP3134 [reference] link together
+exceptions that are related to each other as the cause or context, but there
+are situations where there are multiple unrelated exceptions that need to be
+propagated together as the stack unwinds. Several real world use cases are
+listed below.
 
-## Syntax
+[TODO: flesh these out]
+* asyncio programs, trio, etc
+
+* Multiple errors from separate retries of an operation [https://bugs.python.org/issue29980]
+
+* Situations where multiple unrelated exceptions may be of interest to calling code [https://bugs.python.org/issue40857]
+
+* Multiple teardowns in pytest raising exceptions [https://github.com/pytest-dev/pytest/issues/8217]
+
+## Rationale
+
+Grouping several exceptions together can be done without changes to the
+language, simply by creating a container exception type. Trio is an example of
+a library that has made use of this technique in its `MultiError` type
+[reference to Trio MultiError]. However, such approaches require calling code
+to catch the container exception type, and then inspect it to determine the
+types of errors that had occurred, extract the ones it wants to handle and
+reraise the rest.
+
+Changes to the language are required in order to extend support for
+`ExceptionGroup`s in the style of existing exception handling mechanisms. At
+the very least we would like to be able to catch an `ExceptionGroup` only if
+it contains an exception type that we that chose to handle. Exceptions of
+other types in the same `ExceptionGroup` need to be automatically reraised,
+otherwise it is too easy for user code to inadvertently swallow exceptions
+that it is not handling.
+
+The purpose of this PEP, then, is to add the `except*` syntax for handling
+`ExceptionGroups`s in the interpreter, which in turn requires that
+`ExceptionGroup` is added as a builtin type. The semantics of handling
+`ExceptionGroup`s are not backwards compatible with the current exception
+handling semantics, so we could not modify the behaviour of the `except`
+keyword and instead added the new `except*` syntax.
+
+
+## Specification
+
+### ExceptionGroup
+
+The new builtin exception type, `ExceptionGroup` is a subclass of
+`BaseException`, so it is assignable to `Exception.__cause__` and
+`Exception.__context__`, and can be raised and handled as any exception
+with `raise ExceptionGroup(...)` and `try: ... except ExceptionGroup: ...`.
+
+Its constructor takes two positional-only parameters: a message string and a
+sequence of the nested exceptions, for example:
+`ExceptionGroup('issues', [ValueError('bad value'), TypeError('bad type')])`.
+
+The `ExceptionGroup` class exposes these parameters in the fields `message`
+and `errors`.  A nested exception can also be an `ExceptionGroup` so the class
+represents a tree of exceptions, where the leaves are plain exceptions and
+each internal node represent a time at which the program grouped some
+unrelated exceptions into a new `ExceptionGroup`.
+
+The `ExceptionGroup.subgroup(condition)` method gives us a way to obtain an
+`ExceptionGroup` that has the same metadata (cause, context, traceback) as
+the original group, but contains only those exceptions for which the condition
+is true:
+
+```python
+eg = ExceptionGroup("one",
+                    [TypeError(1),
+                     ExceptionGroup("two",
+                                    [TypeError(2), ValueError(3)])])
+
+type_errors = eg.subgroup(lambda e: isinstance(e, TypeError))
+```
+
+The value of `type_errors` is:
+`ExceptionGroup('one', [TypeError(1), ExceptionGroup('two', [TypeError(2)])])`.
+
+If both the subgroup and its complement are needed, the `ExceptionGroup.split`
+method can be used:
+
+```
+type_errors, other_errors = eg.subgroup(lambda e: isinstance(e, TypeError))
+```
+
+Now `type_errors` is the same as above, and `other_errors` is the complement:
+`ExceptionGroup('one', [ExceptionGroup('two', [ValueError(3)])])`.
+
+The original `eg` is unchanged by `subgroup` or `split`. If it, or any
+nested `ExceptionGroup` is not included in the result in full, a new
+`ExceptionGroup` is created, containing a subset of the exceptions in
+its `errors` list. This partition is done recursively, so potentially
+the entire `ExceptionTree` is copied. There is no need to copy the leaf
+exceptions and the metadata elements (cause, context, traceback).
+
+Since splitting by exception type is a very common use case, `subgroup` and
+`split` also understand this as a shorthard:
+`match, rest = eg.split(TypeError)`, so if the condition is an exception type,
+it is checked with `isinstance` rather than being treated as a callable.
+
+
+#### The Traceback of and `ExceptionGroup`
+
+For regular exceptions, the traceback represents a simple path of frames,
+from the frame in which the exception was raised to the frame in which it was
+was caught or, if it hasn't been caught yet, the frame that the program's
+execution is currently in. The list is constructed by the interpreter, which
+appends any frame from which it exits to the traceback of the 'current
+exception' if one exists (the exception returned by `sys.exc_info()`). To
+support efficient appends, the links in a traceback's list of frames are from
+the oldest to the newest frame. Appending a new frame is then simply a matter
+of inserting a new head to the linked list referenced from the exception's
+`__traceback__` field. Crucially, the traceback's frame list is immutable in
+the sense that frames only need to be added at the head, and never need to be
+removed.
+
+We do not need to make any changes to this data structure. The `__traceback__`
+field of the ExceptionGroup object represents the path that the exceptions
+travelled through together after being joined into the `ExceptionGroup`, and
+the same field on each of the nested exceptions represents that path through
+which each exception arrived to the frame of the merge.
+
+What we do need to change is any code that interprets and displays tracebacks,
+because it will now need to continue into tracebacks of nested exceptions
+once the traceback of an ExceptionGroup has been processed. For example:
+
+
+```python
+def f(v):
+    try:
+        raise ValueError(v)
+    except ValueError as e:
+        return e
+
+try:
+    raise ExceptionGroup("one", [f(1)])
+except ExceptionGroup as e:
+    eg1 = e
+
+try:
+    raise ExceptionGroup("two", [f(2), eg1])
+except ExceptionGroup as e:
+    eg2 = e
+
+import traceback
+traceback.print_exception(eg2)
+
+# Output:
+
+Traceback (most recent call last):
+  File "C:\src\cpython\tmp.py", line 13, in <module>
+    raise ExceptionGroup("two", [f(2), eg1])
+ExceptionGroup: two
+   ------------------------------------------------------------
+   Traceback (most recent call last):
+     File "C:\src\cpython\tmp.py", line 3, in f
+       raise ValueError(v)
+   ValueError: 2
+   ------------------------------------------------------------
+   Traceback (most recent call last):
+     File "C:\src\cpython\tmp.py", line 8, in <module>
+       raise ExceptionGroup("one", [f(1)])
+   ExceptionGroup: one
+      ------------------------------------------------------------
+      Traceback (most recent call last):
+        File "C:\src\cpython\tmp.py", line 3, in f
+          raise ValueError(v)
+      ValueError: 1
+```
+
+
+### except*
+
 
 We're proposing to introduce a new variant of the `try..except` syntax to
 simplify working with exception groups:
@@ -49,18 +207,20 @@ processed by one `except *` clause.
 
 ## Semantics
 
-### Overview
+ In the following we use the term "naked" exception for regular Python
+ exceptions **not wrapped** in an `ExceptionGroup`. E.g. a regular
+ `ValueError` propagating through the stack is "naked".
 
 The `except *SpamError` block will be run if the `try` code raised an
 `ExceptionGroup` with one or more instances of `SpamError`. It would also be
 triggered if a naked instance of  `SpamError` was raised.
 
 The `except *BazError as e` block would create an ExceptionGroup with the
-same nested structure and metadata (msg, cause and context) as the one
-raised, but containing only the instances of `BazError`. This ExceptionGroup
-is assigned to `e`. The type of `e` would be `ExceptionGroup[BazError]`.
-If there was just one naked instance of `BazError`, it would be wrapped
-into an `ExceptionGroup` and assigned to `e`.
+same nested structure and metadata (msg, cause, context and traceback) as the
+one raised, but containing only the instances of `BazError`. This
+`ExceptionGroup` is assigned to `e`. The type of `e` would be
+`ExceptionGroup[BazError]`. If there was just one naked instance of `BazError`,
+it would be wrapped into an `ExceptionGroup` and assigned to `e`.
 
 The `except *(BarError, FooError) as e` would split out all instances of
 `BarError` or `FooError`  into such an ExceptionGroup and assign it to `e`.
@@ -109,12 +269,12 @@ Exceptions are matched using a subclass check. For example:
 ```python
 try:
   low_level_os_operation()
-except *OSerror as errors:
-  for e in errors:
+except *OSerror as eg:
+  for e in eg.errors:
     print(type(e).__name__)
 ```
 
-would output:
+could output:
 
 ```
 BlockingIOError
@@ -131,7 +291,7 @@ Example:
 ```python
 try:
   raise ExceptionGroup(
-    "msg", ValueError('a'), TypeError('b'), TypeError('c'), KeyError('e')
+    "msg", [ValueError('a'), TypeError('b'), TypeError('c'), KeyError('e')]
   )
 except *ValueError as e:
   print(f'got some ValueErrors: {e}')
@@ -143,8 +303,8 @@ except *TypeError as e:
 The above code would print:
 
 ```
-got some ValueErrors: ExceptionGroup("msg", ValueError('a'))
-got some TypeErrors: ExceptionGroup("msg", TypeError('b'), TypeError('c'))
+got some ValueErrors: ExceptionGroup("msg", [ValueError('a')])
+got some TypeErrors: ExceptionGroup("msg", TypeError[('b'), TypeError('c')])
 ```
 
 and then terminate with an unhandled `ExceptionGroup`:
@@ -152,9 +312,9 @@ and then terminate with an unhandled `ExceptionGroup`:
 ```
 ExceptionGroup(
   "msg",
-  TypeError('b'),
-  TypeError('c'),
-  KeyError('e'),
+  [TypeError('b'),
+   TypeError('c'),
+   KeyError('e')]
 )
 ```
 
@@ -167,27 +327,29 @@ will be raised in the except* blocks: a "reraised" list for the naked raises
 and a "raised" list of the parameterised raises.
 
 * Every `except *` clause, run from top to bottom, can match a subset of the
-  exceptions out of the group forming a "working set" of errors for the current
-  clause.  These exceptions are removed from the "incoming" group. If the except
-  block raises an exception, that exception is added to the appropriate result
-  list ("raised" or "reraised"), and in the case of "raise" it gets its
-  "working set" of errors linked to it via the `__context__` attribute.
+  exceptions out of the group forming a "working set" of errors for the
+  current clause.  These exceptions are removed from the "incoming" group.
+  If the except block raises an exception, that exception is added to the
+  appropriate result list ("raised" or "reraised"), and in the case of "raise"
+  it gets its "working set" of errors linked to it via the `__context__`
+  attribute.
 
 * After there are no more `except*` clauses to evaluate, there are the
   following possibilities:
 
-* Both the "incoming" `ExceptionGroup` and the two result lists are empty. This
-means that all exceptions were processed and silenced.
+* Both the "incoming" `ExceptionGroup` and the two result lists are empty.
+This means that all exceptions were processed and silenced.
 
 * The "incoming" `ExceptionGroup` is non-empty but the result lists are:
-not all exceptions were processed. The interpreter raises the "incoming" group.
+not all exceptions were processed. The interpreter raises the "incoming"
+group.
 
 * At least one of the result lists is non-empty: there are exceptions raised
-from the except* clauses. The interpreter constructs a new `ExceptionGroup` with
-an empty message and an exception list that contains all exceptions in "raised"
-in addition to a single ExceptionGroup which holds the exceptions in "reraised"
-and "incoming", in the same nested structure and with the same metadata as in
-the original incoming exception.
+from the except* clauses. The interpreter constructs a new `ExceptionGroup`
+with an empty message and an exception list that contains all exceptions in
+"raised" in addition to a single ExceptionGroup which holds the exceptions in
+"reraised" and "incoming", in the same nested structure and with the same
+metadata as in the original incoming exception.
 
 
 
@@ -209,32 +371,28 @@ except *BlockingIOError:
 #   ExceptionGroup(BlockingIOError())
 ```
 
-### Raising ExceptionGroups manually
+### Raising ExceptionGroups explicitly
 
-Exception groups can be created and raised as follows:
+Exception groups can be derived from other exception groups and raised as follows:
 
 ```python
 try:
   low_level_os_operation()
 except *OSerror as errors:
-  new_errors = []
-  for e in errors:
-    if e.errno != errno.EPIPE:
-       new_errors.append(e)
-  raise ExceptionGroup(errors.msg, *new_errors)
+  raise errors.subgroup(lambda e: e.errno != errno.EPIPE)
 ```
 
 The above code ignores all `EPIPE` OS errors, while letting all other
 exceptions propagate.
 
-Raising exceptions while handling an `ExceptionGroup` introduces nesting because
-the traceback and chaining information needs to be maintained:
+Raising exceptions while handling an `ExceptionGroup` introduces nesting
+because the traceback and chaining information needs to be maintained:
 
 ```python
 try:
-  raise ExceptionGroup("one", ValueError('a'), TypeError('b'))
+  raise ExceptionGroup("one", [ValueError('a'), TypeError('b')])
 except *ValueError:
-  raise ExceptionGroup("two", KeyError('x'), KeyError('y'))
+  raise ExceptionGroup("two", [KeyError('x'), KeyError('y')])
 
 # would result in:
 #
@@ -242,22 +400,23 @@ except *ValueError:
 #     "",
 #     ExceptionGroup(    <-- context = ExceptionGroup(ValueError('a'))
 #       "two",
-#       KeyError('x'),
-#       KeyError('y'),
+#       [KeyError('x'),
+#        KeyError('y')],
 #     ),
 #     ExceptionGroup(    <-- context, cause, tb same as the original "one"
 #       "one",
-#       TypeError('b'),
+#       [TypeError('b')],
 #     )
 #   )
 ```
 
-A regular `raise Exception` would not wrap `Exception` in its own group, but a new group would still be
-created to merged it with the ExceptionGroup of unhandled exceptions:
+A regular `raise Exception` would not wrap `Exception` in its own group, but a
+new group would still be created to merged it with the ExceptionGroup of
+unhandled exceptions:
 
 ```python
 try:
-  raise ExceptionGroup("eg", ValueError('a'), TypeError('b'))
+  raise ExceptionGroup("eg", [ValueError('a'), TypeError('b')])
 except *ValueError:
   raise KeyError('x')
 
@@ -266,19 +425,20 @@ except *ValueError:
 #   ExceptionGroup(
 #     "",
 #     KeyError('x'),
-#     ExceptionGroup("eg", TypeError('b'))
+#     ExceptionGroup("eg", [TypeError('b')])
 #   )
 ```
 
 ### Exception Chaining
 
-If an error occurs during processing a set of exceptions in a `except *` block,
-all matched errors would be put in a new `ExceptionGroup` which would be
-referenced from the just occurred exception via its `__context__` attribute:
+If an error occurs during processing a set of exceptions in a `except *`
+block, all matched errors would be put in a new `ExceptionGroup` which would
+be referenced from the just occurred exception via its `__context__`
+attribute:
 
 ```python
 try:
-  raise ExceptionGroup("eg", ValueError('a'), ValueError('b'), TypeError('z'))
+  raise ExceptionGroup("eg", [ValueError('a'), ValueError('b'), TypeError('z')])
 except *ValueError:
   1 / 0
 
@@ -286,11 +446,11 @@ except *ValueError:
 #
 #   ExceptionGroup(
 #     "",
-#     ExceptionGroup(
+#     [ExceptionGroup(
 #       "eg",
-#       TypeError('z'),
-#     ),
-#     ZeroDivisionError()
+#       [TypeError('z')],
+#      ),
+#      ZeroDivisionError()]
 #   )
 #
 # where the `ZeroDivisionError()` instance would have
@@ -298,8 +458,7 @@ except *ValueError:
 #
 #   ExceptionGroup(
 #     "eg",
-#     ValueError('a'),
-#     ValueError('b')
+#     [ValueError('a'), ValueError('b')]
 #   )
 ```
 
@@ -314,11 +473,13 @@ except *ValueError as errors:
 # would result in:
 #
 #   ExceptionGroup(
-#     ExceptionGroup(
+#     "",
+#     [ExceptionGroup(
 #       "eg",
-#       TypeError('z'),
-#     ),
-#     RuntimeError('unexpected values')
+#       [TypeError('z')],
+#      ),
+#      RuntimeError('unexpected values')
+#     ]
 #   )
 #
 # where the `RuntimeError()` instance would have
@@ -326,27 +487,23 @@ except *ValueError as errors:
 #
 #   ExceptionGroup(
 #      "eg",
-#     ValueError('a'),
-#     ValueError('b')
+#      [ValueError('a'), ValueError('b')]
 #   )
 ```
 
 ### Recursive Matching
 
 The matching of `except *` clauses against an `ExceptionGroup` is performed
-recursively. E.g.:
+recursively, using the `ExceptionGroup.split()` method. E.g.:
 
 ```python
 try:
   raise ExceptionGroup(
     "eg",
-    ValueError('a'),
-    TypeError('b'),
-    ExceptionGroup(
-	  "nested",
-      TypeError('c'),
-      KeyError('d')
-    )
+    [ValueError('a'),
+     TypeError('b'),
+     ExceptionGroup("nested", [TypeError('c'), KeyError('d')])
+    ]
   )
 except *TypeError as e:
   print(f'e = {e}')
@@ -355,32 +512,9 @@ except *Exception:
 
 # would print:
 #
-#  e = ExceptionGroup("eg", TypeError('b'), ExceptionGroup("nested", TypeError('c'))
+#  e = ExceptionGroup("eg", [TypeError('b'), ExceptionGroup("nested", [TypeError('c')])])
 ```
 
-Iteration over an `ExceptionGroup` that has nested `ExceptionGroup` objects
-in it effectively flattens the entire tree. E.g.
-
-```python
-print(
-  list(
-    ExceptionGroup(
-	  "eg",
-      ValueError('a'),
-      TypeError('b'),
-      ExceptionGroup(
-	    "nested",
-        TypeError('c'),
-        KeyError('d')
-      )
-    )
-  )
-)
-
-# would output:
-#
-#   [ValueError('a'), TypeError('b'), TypeError('c'), KeyError('d')]
-```
 
 ### Re-raising ExceptionGroups
 
@@ -393,13 +527,10 @@ likely get lost:
 try:
   raise ExceptionGroup(
     "top",
-    ValueError('a'),
-    TypeError('b'),
-    ExceptionGroup(
-	  "nested",
-      TypeError('c'),
-      KeyError('d')
-    )
+    [ValueError('a'),
+     TypeError('b'),
+     ExceptionGroup("nested",[TypeError('c'), KeyError('d')])
+    ]
   )
 except *TypeError as e:
   e.foo = 'bar'
@@ -407,43 +538,6 @@ except *TypeError as e:
   #              destroyed after the `except*` clause.
 ```
 
-If the user wants to "flatten" the tree, they can explicitly create a new
-`ExceptionGroup` and raise it:
-
-
-```python
-try:
-  raise ExceptionGroup(
-    "one",
-    ValueError('a'),
-    TypeError('b'),
-    ExceptionGroup(
-	  "two",
-      TypeError('c'),
-      KeyError('d')
-    )
-  )
-except *TypeError as e:
-  raise ExceptionGroup("three", *e)
-
-# would terminate with:
-#
-#  ExceptionGroup(
-#    "three",
-#    ExceptionGroup(
-#      TypeError('b'),
-#      TypeError('c'),
-#    ),
-#    ExceptionGroup(
-#        "one",
-#        ValueError('a'),
-#        ExceptionGroup(
-#            "two",
-#            KeyError('d')
-#        )
-#    )
-#  )
-```
 
 With the regular exceptions, there's a subtle difference between `raise e`
 and a bare `raise`:
@@ -472,39 +566,64 @@ This difference is preserved with exception groups:
 * The `raise` form re-raises all exceptions from the group *without recording
   the current frame in their tracebacks*.
 
-* The `raise e` form re-raises all exceptions from the group with tracebacks
+* The `raise e` form re-raises the `ExceptionGroup` `e` with its traceback
   updated to point out to the current frame, effectively resulting in user
   seeing the `raise e` line in their tracebacks.
 
-That said, both forms would not affect the overall shape of the exception
-group:
+After all `except *` blocks have been processed, the remaning unhandled
+exceptions are merged together with the raised and re-reaised exceptions,
+and the manner in which this is done depends on what the traceback needs
+to contain: in the case of `raise e`, we have a new `ExceptionGroup` that
+is merged with the unhandled `ExceptionGroup`, whereas in the case of
+a naked `raise` we retain the re-reaised exceptions as if they were
+unhandled:
 
 ```python
-try:
-  raise ExceptionGroup(
-    "one",
-    ValueError('a'),
-    TypeError('b'),
-    ExceptionGroup(
-      "two",
-      TypeError('c'),
-      KeyError('d')
-    )
-  )
-except *TypeError as e:
-  raise  # or "raise e"
 
-# would both terminate with:
+eg = raise ExceptionGroup(
+    "one",
+    [ValueError('a'),
+     TypeError('b'),
+     ExceptionGroup("two", [TypeError('c'), KeyError('d')])
+    ]
+  )
+
+try:
+  raise eg
+except *TypeError as e:
+  raise
+
+# would terminate with:
 #
 #  ExceptionGroup(
 #    "one",
-#    ValueError('a'),
-#    TypeError('b'),
+#    [ValueError('a'),
+#     TypeError('b'),
+#     ExceptionGroup("two", [TypeError('c'), KeyError('d')])
+#    ]
+#  )
+
+try:
+  raise eg:
+except *TypeError as e:
+  raise e
+
+# would terminate with the following, where the re-raised exception
+# (which has a different traceback now) is merged with the unhandled
+# exceptions into a new `ExceptionGroup`:
+#
+#  ExceptionGroup(
+#    "",
+#    [ExceptionGroup(
+#      "one",
+#      [ValueError('a'),
+#       ExceptionGroup("two", [KeyError('d')]),
 #    ExceptionGroup(
-#      "two",
-#      TypeError('c'),
-#      KeyError('d')
-#    )
+#      "one",
+#      [TypeError('b'),
+#       ExceptionGroup("two", [TypeError('c')])
+#      ]),
+#    ]
 #  )
 ```
 
@@ -539,29 +658,7 @@ errors is error prone.
 
 We can consider allowing some of them in future versions of Python.
 
-## The Traceback of an Exception Group
 
-For regular exceptions, the traceback represents a simple path of frames,
-from the frame in which the exception was raised to the frame in which it was
-was caught or, if it hasn't been caught yet, the frame that the program's
-execution is currently in. The list is constructed by the interpreter which,
-appends any frame it exits to the traceback of the 'current exception' if one
-exists (the exception returned by `sys.exc_info()`). To support efficient appends,
-the links in a traceback's list of frames are from the oldest to the newest frame.
-Appending a new frame is then simply a matter of inserting a new head to the
-linked list referenced from the exception's `__traceback__` field. Crucially,
-the traceback's frame list is immutable in the sense that frames only need to
-be added at the head, and never need to be removed.
-
-We will not need to make any changes to this data structure. The
-`__traceback__` field of the ExceptionGroup object represents that path that
-the exceptions travelled through together after being joined into the
-ExceptionGroup, and the same field on each of the nested exceptions represents
-that path through which each exception arrived to the frame of the merge.
-
-What we do need to change is any code that interprets and displays tracebacks,
-because it will now need to continue into tracebacks of nested exceptions
-once the traceback of an ExceptionGroup has been processed.
 
 ## Design Considerations
 
@@ -706,6 +803,9 @@ in those tasks. Whereas handling `*CancelledError` makes sense -- it means that
 the current task is being canceled and this might be a good opportunity to do
 a cleanup.
 
+## Backwards Compatibility
+
+The behaviour of `except` is unchanged so existing code will continue to work.
 
 ### Adoption of try..except* syntax
 
@@ -722,16 +822,54 @@ to start using the new `except *` syntax right away.  They will have to use
 the new ExceptionGroup low-level APIs along with `try..except ExceptionGroup`
 to support running user code that can raise exception groups.
 
+
+## Security Implications
+
+## How to Teach This
+
+## Reference Implementation
+
+[An experimental implementation](https://github.com/iritkatriel/cpython/tree/exceptionGroup-stage4).
+
+(`raise` in `except*` not supported yet).
+
+## Rejected Ideas
+
+### The ExceptionGroup API
+
+We considered making `ExceptionGroup`s iterable, so that `list(eg)` would
+produce a flattened list of the plain exceptions contained in the group.
+We decided that this would not be not be a sound API, because the metadata
+(cause, context and traceback) of the individual exceptions in a group are
+incomplete and this could create problems.  If use cases arise where this
+can be helpful, we can document (or even provide in the standard library)
+a sound recipe for accessing an individual exception: use the `split()`
+method to create an `ExceptionGroup` for a single exception and then
+transform it into a plain exception with the current metadata.
+
 ### Traceback Representation
 
 We considered options for adapting the traceback data structure to represent
-trees, but it became apparent that a traceback tree is not meaningful once separated
-from the exceptions it refers to. While a simple-path traceback can be attached to
-any exception by a `with_traceback()` call, it is hard to imagine a case where it
-makes sense to assign a traceback tree to an exception group.  Furthermore, a
-useful display of the traceback includes information about the nested exceptions.
-For this reason we decided it is best to leave the traceback mechanism as it is
-and modify the traceback display code.
+trees, but it became apparent that a traceback tree is not meaningful once
+separated from the exceptions it refers to. While a simple-path traceback can
+be attached to any exception by a `with_traceback()` call, it is hard to
+imagine a case where it makes sense to assign a traceback tree to an exception
+group.  Furthermore, a useful display of the traceback includes information
+about the nested exceptions. For this reason we decided it is best to leave
+the traceback mechanism as it is and modify the traceback display code.
+
+### A full redesign of `except`
+
+We considered introducing a new keyword (such as `catch`) which can be used
+to handle both plain exceptions and `ExceptionGroup`s. Its semantics would
+be the same as those of `except*` when catching an `ExceptionGroup`, but
+it would not wrap plain a exception to create an `ExceptionGroup`. This
+would have been part of a long term plan to replace `except` by `catch`,
+but we decided that deprecating `except` in favour of an enhanced keyword
+would be too confusing for users at this time, so it is more appropriate
+to introduce the `except*` syntax for `ExceptionGroup`s while `except`
+continues to be used for simple exceptions.
+
 
 ## See Also
 
@@ -739,8 +877,13 @@ and modify the traceback display code.
   programs:
   https://github.com/python/exceptiongroups/issues/3#issuecomment-716203284
 
-* A WIP implementation of the `ExceptionGroup` type by @iritkatriel
-  tracked [here](https://github.com/iritkatriel/cpython/tree/exceptionGroup-stage4).
-
-* The issue where this concept was first formalized:
+  * The issue where this concept was first formalized:
   https://github.com/python/exceptiongroups/issues/4
+
+
+## References
+
+## Copyright
+
+This document is placed in the public domain or under the
+CC0-1.0-Universal license, whichever is more permissive.
