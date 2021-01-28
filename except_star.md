@@ -119,7 +119,7 @@ it is checked with `isinstance` rather than being treated as a callable.
 For regular exceptions, the traceback represents a simple path of frames,
 from the frame in which the exception was raised to the frame in which it was
 was caught or, if it hasn't been caught yet, the frame that the program's
-execution is currently in. The list is constructed by the interpreter which,
+execution is currently in. The list is constructed by the interpreter, which
 appends any frame from which it exits to the traceback of the 'current
 exception' if one exists (the exception returned by `sys.exc_info()`). To
 support efficient appends, the links in a traceback's list of frames are from
