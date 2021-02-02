@@ -76,42 +76,91 @@ unrelated exceptions into a new `ExceptionGroup`.
 
 The `ExceptionGroup.subgroup(condition)` method gives us a way to obtain an
 `ExceptionGroup` that has the same metadata (cause, context, traceback) as
-the original group, but contains only those exceptions for which the condition
-is true:
+the original group, and the same nested structure of `ExceptionGroup`s, but
+contains only those exceptions for which the condition is true:
 
 ```python
-eg = ExceptionGroup("one",
-                    [TypeError(1),
-                     ExceptionGroup("two",
-                                    [TypeError(2), ValueError(3)])])
-
-type_errors = eg.subgroup(lambda e: isinstance(e, TypeError))
+>>> eg = ExceptionGroup("one",
+...                     [TypeError(1),
+...                      ExceptionGroup("two",
+...                                     [TypeError(2), ValueError(3)]),
+...                      ExceptionGroup("three",
+...                                     [OSError(4)])
+...                     ])
+>>> traceback.print_exception(eg)
+ExceptionGroup: one
+   ------------------------------------------------------------
+   TypeError: 1
+   ------------------------------------------------------------
+   ExceptionGroup: two
+      ------------------------------------------------------------
+      TypeError: 2
+      ------------------------------------------------------------
+      ValueError: 3
+   ------------------------------------------------------------
+   ExceptionGroup: three
+      ------------------------------------------------------------
+      OSError: 4
+>>> type_errors = eg.subgroup(lambda e: isinstance(e, TypeError))
+>>> traceback.print_exception(type_errors)
+ExceptionGroup: one
+   ------------------------------------------------------------
+   TypeError: 1
+   ------------------------------------------------------------
+   ExceptionGroup: two
+      ------------------------------------------------------------
+      TypeError: 2
+>>>
 ```
 
-The value of `type_errors` is:
-`ExceptionGroup('one', [TypeError(1), ExceptionGroup('two', [TypeError(2)])])`.
+Empty nested `ExceptionGroup`s are omitted from the result, as in the
+case of `ExceptionGroup("three")` in the example above.
 
 If both the subgroup and its complement are needed, the `ExceptionGroup.split`
 method can be used:
 
+```Python
+>>> type_errors, other_errors = eg.split(lambda e: isinstance(e, TypeError))
+>>> traceback.print_exception(type_errors)
+ExceptionGroup: one
+   ------------------------------------------------------------
+   TypeError: 1
+   ------------------------------------------------------------
+   ExceptionGroup: two
+      ------------------------------------------------------------
+      TypeError: 2
+>>> traceback.print_exception(other_errors)
+ExceptionGroup: one
+   ------------------------------------------------------------
+   ExceptionGroup: two
+      ------------------------------------------------------------
+      ValueError: 3
+   ------------------------------------------------------------
+   ExceptionGroup: three
+      ------------------------------------------------------------
+      OSError: 4
+>>>
 ```
-type_errors, other_errors = eg.subgroup(lambda e: isinstance(e, TypeError))
-```
-
-Now `type_errors` is the same as above, and `other_errors` is the complement:
-`ExceptionGroup('one', [ExceptionGroup('two', [ValueError(3)])])`.
 
 The original `eg` is unchanged by `subgroup` or `split`. If it, or any
 nested `ExceptionGroup` is not included in the result in full, a new
 `ExceptionGroup` is created, containing a subset of the exceptions in
 its `errors` list. This partition is done recursively, so potentially
-the entire `ExceptionTree` is copied. There is no need to copy the leaf
+the entire exception tree is copied. There is no need to copy the leaf
 exceptions and the metadata elements (cause, context, traceback).
 
+If a split is trivial (one side is empty), then None is returned for the
+other size:
+
+```python
+>>> other_errors.split(lambda e: isinstance(e, SyntaxError))
+(None, ExceptionGroup('one', [ExceptionGroup('two', [ValueError(3)]), ExceptionGroup('three', [OSError(4)])]))
+```
+
 Since splitting by exception type is a very common use case, `subgroup` and
-`split` also understand this as a shorthard:
-`match, rest = eg.split(TypeError)`, so if the condition is an exception type,
-it is checked with `isinstance` rather than being treated as a callable.
+`split` can take an exception type or tuple of exception types and treat it
+as a shorthand for matching that type: `eg.split(TypeError)`, is equivalent to
+`eg.split(lambda e: isinstance(e, TypeError))`.
 
 
 #### The Traceback of and `ExceptionGroup`
@@ -141,46 +190,40 @@ once the traceback of an ExceptionGroup has been processed. For example:
 
 
 ```python
-def f(v):
-    try:
-        raise ValueError(v)
-    except ValueError as e:
-        return e
-
-try:
-    raise ExceptionGroup("one", [f(1)])
-except ExceptionGroup as e:
-    eg1 = e
-
-try:
-    raise ExceptionGroup("two", [f(2), eg1])
-except ExceptionGroup as e:
-    eg2 = e
-
-import traceback
-traceback.print_exception(eg2)
-
-# Output:
-
+>>> def f(v):
+...     try:
+...         raise ValueError(v)
+...     except ValueError as e:
+...         return e
+...
+>>> try:
+...     raise ExceptionGroup("one", [f(1)])
+... except ExceptionGroup as e:
+...     eg1 = e
+...
+>>> try:
+...     raise ExceptionGroup("two", [f(2), eg1])
+... except ExceptionGroup as e:
+...     eg2 = e
+...
+>>> import traceback
+>>> traceback.print_exception(eg2)
 Traceback (most recent call last):
-  File "C:\src\cpython\tmp.py", line 13, in <module>
-    raise ExceptionGroup("two", [f(2), eg1])
+  File "<stdin>", line 2, in <module>
 ExceptionGroup: two
    ------------------------------------------------------------
    Traceback (most recent call last):
-     File "C:\src\cpython\tmp.py", line 3, in f
-       raise ValueError(v)
+     File "<stdin>", line 3, in f
    ValueError: 2
    ------------------------------------------------------------
    Traceback (most recent call last):
-     File "C:\src\cpython\tmp.py", line 8, in <module>
-       raise ExceptionGroup("one", [f(1)])
+     File "<stdin>", line 2, in <module>
    ExceptionGroup: one
       ------------------------------------------------------------
       Traceback (most recent call last):
-        File "C:\src\cpython\tmp.py", line 3, in f
-          raise ValueError(v)
+        File "<stdin>", line 3, in f
       ValueError: 1
+>>>
 ```
 
 
@@ -206,6 +249,8 @@ The `*` symbol indicates that zero or more exceptions can be "caught" and
 processed by one `except *` clause.
 
 ## Semantics
+
+### Overview
 
  In the following we use the term "naked" exception for regular Python
  exceptions **not wrapped** in an `ExceptionGroup`. E.g. a regular
@@ -294,27 +339,28 @@ try:
     "msg", [ValueError('a'), TypeError('b'), TypeError('c'), KeyError('e')]
   )
 except *ValueError as e:
-  print(f'got some ValueErrors: {e}')
+  print(f'got some ValueErrors: {e!r}')
 except *TypeError as e:
-  print(f'got some TypeErrors: {e}')
+  print(f'got some TypeErrors: {e!r}')
   raise
 ```
 
 The above code would print:
 
 ```
-got some ValueErrors: ExceptionGroup("msg", [ValueError('a')])
-got some TypeErrors: ExceptionGroup("msg", TypeError[('b'), TypeError('c')])
+got some ValueErrors: ExceptionGroup('msg', [ValueError('a')])
+got some TypeErrors: ExceptionGroup('msg', [TypeError('b'), TypeError('c')])
 ```
 
-and then terminate with an unhandled `ExceptionGroup`:
+and then terminate raising the following `ExceptionGroup` containing the
+exceptions that were not handled or were caught and reraised:
 
 ```
 ExceptionGroup(
   "msg",
-  [TypeError('b'),
-   TypeError('c'),
-   KeyError('e')]
+  [KeyError('e'),     # unhandled
+   TypeError('b'),    # reraised
+   TypeError('c')]    # reraised
 )
 ```
 
@@ -322,53 +368,53 @@ Basically, before interpreting `except *` clauses, the interpreter will
 have an "incoming" `ExceptionGroup` object with a list of exceptions in it
 to handle, and then:
 
-* The interpreter creates two new empty result lists for the exceptions that
+* The interpreter creates two new empty result lists for any exceptions that
 will be raised in the except* blocks: a "reraised" list for the naked raises
-and a "raised" list of the parameterised raises.
+and a "raised" list of the parameterised raises. It also saves the original
+"incoming" group which it uses in the end, if necessary, to combine the
+reraised exceptions into the same structure.
 
 * Every `except *` clause, run from top to bottom, can match a subset of the
-  exceptions out of the group forming a "working set" of errors for the
-  current clause.  These exceptions are removed from the "incoming" group.
-  If the except block raises an exception, that exception is added to the
+  exceptions out of the "incoming" group, forming a "working set" of errors for
+  the current clause (the value of `sys.exc_info()` while the clause is
+  executed).  These exceptions are removed from the "incoming" group so
+  that they will be excluded from matching additional clauses.
+  If an except block raises an exception, that exception is added to the
   appropriate result list ("raised" or "reraised"), and in the case of "raise"
   it gets its "working set" of errors linked to it via the `__context__`
   attribute.
 
-* After there are no more `except*` clauses to evaluate, there are the
-  following possibilities:
+* After all `except*` clause were evaluated, there are the following
+ possibilities:
 
-* Both the "incoming" `ExceptionGroup` and the two result lists are empty.
+1. Both the "incoming" `ExceptionGroup` and the two result lists are empty.
 This means that all exceptions were processed and silenced.
 
-* The "incoming" `ExceptionGroup` is non-empty but the result lists are:
-not all exceptions were processed. The interpreter raises the "incoming"
-group.
+2. The "incoming" and/or "reraised" `ExceptionGroup`s are non-empty: not all
+exceptions were processed, and some were reraised. The interpreter constructs
+a combined subgroup of the original `ExceptionGroup`, consisting of the
+"incoming" and the "reraised" exceptions (using the `subgroup` operation to
+  preserve the structure of the original `ExceptionGroup`).
 
-* At least one of the result lists is non-empty: there are exceptions raised
-from the except* clauses. The interpreter constructs a new `ExceptionGroup`
-with an empty message and an exception list that contains all exceptions in
-"raised" in addition to a single ExceptionGroup which holds the exceptions in
-"reraised" and "incoming", in the same nested structure and with the same
-metadata as in the original incoming exception.
+3. The list of "raised" exceptions is not empty. Then the interpreter
+constructs a new `ExceptionGroup` with an empty message and an exception list
+that contains all exceptions in "raised", as well as the `ExceptionGroup`
+created in the previous step for any "incoming" or "reraised" exceptions.
 
 
-
-The order of `except*` clauses is significant just like with the regular
-`try..except`, e.g.:
+The following example shows that order of `except*` clauses is significant
+just like with the regular `try..except`, and that a naked exception is
+wrapped by an `ExceptionGroup` when caught by an `except *`:
 
 ```python
-try:
-  raise BlockingIOError
-except *OSError as e:
-  # Would catch the error
-  print(e)
-except *BlockingIOError:
-  # Would never run
-  print('never')
-
-# would print:
-#
-#   ExceptionGroup(BlockingIOError())
+>>> try:
+...    raise BlockingIOError
+... except *OSError as e:   # Would catch the error
+...   print(repr(e))
+... except *BlockingIOError: # Would never run
+...   print('never')
+...
+ExceptionGroup('', [BlockingIOError()])
 ```
 
 ### Raising ExceptionGroups explicitly
@@ -386,28 +432,43 @@ The above code ignores all `EPIPE` OS errors, while letting all other
 exceptions propagate.
 
 Raising exceptions while handling an `ExceptionGroup` introduces nesting
-because the traceback and chaining information needs to be maintained:
+because the traceback and chaining information need to be maintained:
 
 ```python
-try:
-  raise ExceptionGroup("one", [ValueError('a'), TypeError('b')])
-except *ValueError:
-  raise ExceptionGroup("two", [KeyError('x'), KeyError('y')])
+>>> try:
+...   try:
+...     raise ExceptionGroup("one", [ValueError('a'), TypeError('b')])
+...   except *ValueError:
+...     raise ExceptionGroup("two", [KeyError('x'), KeyError('y')])
+... except BaseException as e:
+...   traceback.print_exception(e)
+...
+Traceback (most recent call last):
+  File "<stdin>", line 3, in <module>
+ExceptionGroup
+   ------------------------------------------------------------
+   Traceback (most recent call last):
+     File "<stdin>", line 3, in <module>
+   ExceptionGroup: one
+      ------------------------------------------------------------
+      ValueError: a
 
-# would result in:
-#
-#   ExceptionGroup(
-#     "",
-#     ExceptionGroup(    <-- context = ExceptionGroup(ValueError('a'))
-#       "two",
-#       [KeyError('x'),
-#        KeyError('y')],
-#     ),
-#     ExceptionGroup(    <-- context, cause, tb same as the original "one"
-#       "one",
-#       [TypeError('b')],
-#     )
-#   )
+   During handling of the above exception, another exception occurred:
+
+   Traceback (most recent call last):
+     File "<stdin>", line 5, in <module>
+   ExceptionGroup: two
+      ------------------------------------------------------------
+      KeyError: 'x'
+      ------------------------------------------------------------
+      KeyError: 'y'
+   ------------------------------------------------------------
+   Traceback (most recent call last):
+     File "<stdin>", line 3, in <module>
+   ExceptionGroup: one
+      ------------------------------------------------------------
+      TypeError: b
+>>>
 ```
 
 A regular `raise Exception` would not wrap `Exception` in its own group, but a
@@ -415,18 +476,36 @@ new group would still be created to merged it with the ExceptionGroup of
 unhandled exceptions:
 
 ```python
-try:
-  raise ExceptionGroup("eg", [ValueError('a'), TypeError('b')])
-except *ValueError:
-  raise KeyError('x')
+>>> try:
+...   try:
+...     raise ExceptionGroup("eg", [ValueError('a'), TypeError('b')])
+...   except *ValueError:
+...     raise KeyError('x')
+... except BaseException as e:
+...   traceback.print_exception(e)
+...
+Traceback (most recent call last):
+  File "<stdin>", line 3, in <module>
+ExceptionGroup
+   ------------------------------------------------------------
+   Traceback (most recent call last):
+     File "<stdin>", line 3, in <module>
+   ExceptionGroup: eg
+      ------------------------------------------------------------
+      ValueError: a
 
-# would result in:
-#
-#   ExceptionGroup(
-#     "",
-#     KeyError('x'),
-#     ExceptionGroup("eg", [TypeError('b')])
-#   )
+   During handling of the above exception, another exception occurred:
+
+   Traceback (most recent call last):
+     File "<stdin>", line 5, in <module>
+   KeyError: 'x'
+   ------------------------------------------------------------
+   Traceback (most recent call last):
+     File "<stdin>", line 3, in <module>
+   ExceptionGroup: eg
+      ------------------------------------------------------------
+      TypeError: b
+>>>
 ```
 
 ### Exception Chaining
@@ -437,58 +516,75 @@ be referenced from the just occurred exception via its `__context__`
 attribute:
 
 ```python
-try:
-  raise ExceptionGroup("eg", [ValueError('a'), ValueError('b'), TypeError('z')])
-except *ValueError:
-  1 / 0
+>>> try:
+...   try:
+...     raise ExceptionGroup("eg", [ValueError('a'), ValueError('b'), TypeError('z')])
+...   except *ValueError:
+...     1/0
+... except BaseException as e:
+...   traceback.print_exception(e)
+...
+Traceback (most recent call last):
+  File "<stdin>", line 3, in <module>
+ExceptionGroup
+   ------------------------------------------------------------
+   Traceback (most recent call last):
+     File "<stdin>", line 3, in <module>
+   ExceptionGroup: eg
+      ------------------------------------------------------------
+      ValueError: a
+      ------------------------------------------------------------
+      ValueError: b
 
-# would result in:
-#
-#   ExceptionGroup(
-#     "",
-#     [ExceptionGroup(
-#       "eg",
-#       [TypeError('z')],
-#      ),
-#      ZeroDivisionError()]
-#   )
-#
-# where the `ZeroDivisionError()` instance would have
-# its __context__ attribute set to
-#
-#   ExceptionGroup(
-#     "eg",
-#     [ValueError('a'), ValueError('b')]
-#   )
+   During handling of the above exception, another exception occurred:
+
+   Traceback (most recent call last):
+     File "<stdin>", line 5, in <module>
+   ZeroDivisionError: division by zero
+   ------------------------------------------------------------
+   Traceback (most recent call last):
+     File "<stdin>", line 3, in <module>
+   ExceptionGroup: eg
+      ------------------------------------------------------------
+      TypeError: z
+>>>
 ```
 
-It's also possible to explicitly chain exceptions:
+It's also possible to explicitly chain the cause of an exception:
 
 ```python
-try:
-  raise ExceptionGroup("eg", ValueError('a'), ValueError('b'), TypeError('z'))
-except *ValueError as errors:
-  raise RuntimeError('unexpected values') from errors
+>>> try:
+...   try:
+...     raise ExceptionGroup("eg", [ValueError('a'), ValueError('b'), TypeError('z')])
+...   except *ValueError as errors:
+...     raise RuntimeError('unexpected values') from errors
+... except ExceptionGroup as e:
+...   traceback.print_exception(e)
+...
+Traceback (most recent call last):
+  File "<stdin>", line 3, in <module>
+ExceptionGroup
+   ------------------------------------------------------------
+   Traceback (most recent call last):
+     File "<stdin>", line 3, in <module>
+   ExceptionGroup: eg
+      ------------------------------------------------------------
+      ValueError: a
+      ------------------------------------------------------------
+      ValueError: b
 
-# would result in:
-#
-#   ExceptionGroup(
-#     "",
-#     [ExceptionGroup(
-#       "eg",
-#       [TypeError('z')],
-#      ),
-#      RuntimeError('unexpected values')
-#     ]
-#   )
-#
-# where the `RuntimeError()` instance would have
-# its __cause__ attribute set to
-#
-#   ExceptionGroup(
-#      "eg",
-#      [ValueError('a'), ValueError('b')]
-#   )
+   The above exception was the direct cause of the following exception:
+
+   Traceback (most recent call last):
+     File "<stdin>", line 5, in <module>
+   RuntimeError: unexpected values
+   ------------------------------------------------------------
+   Traceback (most recent call last):
+     File "<stdin>", line 3, in <module>
+   ExceptionGroup: eg
+      ------------------------------------------------------------
+      TypeError: z
+>>>
 ```
 
 ### Recursive Matching
@@ -497,22 +593,22 @@ The matching of `except *` clauses against an `ExceptionGroup` is performed
 recursively, using the `ExceptionGroup.split()` method. E.g.:
 
 ```python
-try:
-  raise ExceptionGroup(
-    "eg",
-    [ValueError('a'),
-     TypeError('b'),
-     ExceptionGroup("nested", [TypeError('c'), KeyError('d')])
-    ]
-  )
-except *TypeError as e:
-  print(f'e = {e}')
-except *Exception:
-  pass
-
-# would print:
-#
-#  e = ExceptionGroup("eg", [TypeError('b'), ExceptionGroup("nested", [TypeError('c')])])
+>>> try:
+...   raise ExceptionGroup(
+...     "eg",
+...     [ValueError('a'),
+...      TypeError('b'),
+...      ExceptionGroup("nested", [TypeError('c'), KeyError('d')])
+...     ]
+...   )
+... except *TypeError as e1:
+...   print(f'e1 = {e1!r}')
+... except *Exception as e2:
+...   print(f'e2 = {e2!r}')
+...
+e1 = ExceptionGroup('eg', [TypeError('b'), ExceptionGroup('nested', [TypeError('c')])])
+e2 = ExceptionGroup('eg', [ValueError('a'), ExceptionGroup('nested', [KeyError('d')])])
+>>>
 ```
 
 
@@ -580,7 +676,7 @@ unhandled:
 
 ```python
 
-eg = raise ExceptionGroup(
+eg = ExceptionGroup(
     "one",
     [ValueError('a'),
      TypeError('b'),
@@ -588,44 +684,66 @@ eg = raise ExceptionGroup(
     ]
   )
 
-try:
-  raise eg
-except *TypeError as e:
-  raise
-
-# would terminate with:
-#
-#  ExceptionGroup(
-#    "one",
-#    [ValueError('a'),
-#     TypeError('b'),
-#     ExceptionGroup("two", [TypeError('c'), KeyError('d')])
-#    ]
-#  )
-
-try:
-  raise eg:
-except *TypeError as e:
-  raise e
-
-# would terminate with the following, where the re-raised exception
-# (which has a different traceback now) is merged with the unhandled
-# exceptions into a new `ExceptionGroup`:
-#
-#  ExceptionGroup(
-#    "",
-#    [ExceptionGroup(
-#      "one",
-#      [ValueError('a'),
-#       ExceptionGroup("two", [KeyError('d')]),
-#    ExceptionGroup(
-#      "one",
-#      [TypeError('b'),
-#       ExceptionGroup("two", [TypeError('c')])
-#      ]),
-#    ]
-#  )
+>>> try:
+...   try:
+...     raise eg
+...   except *TypeError as e:
+...     raise
+... except ExceptionGroup as e:
+...   traceback.print_exception(e)
+...
+Traceback (most recent call last):
+  File "<stdin>", line 3, in <module>
+ExceptionGroup: one
+   ------------------------------------------------------------
+   ValueError: a
+   ------------------------------------------------------------
+   TypeError: b
+   ------------------------------------------------------------
+   ExceptionGroup: two
+      ------------------------------------------------------------
+      TypeError: c
+      ------------------------------------------------------------
+      KeyError: 'd'
+>>>
+>>> try:
+...   try:
+...     raise eg
+...   except *TypeError as e:
+...     raise e
+... except ExceptionGroup as e:
+...   traceback.print_exception(e)
+...
+Traceback (most recent call last):
+  File "<stdin>", line 3, in <module>
+  File "<stdin>", line 3, in <module>
+ExceptionGroup
+   ------------------------------------------------------------
+   Traceback (most recent call last):
+     File "<stdin>", line 5, in <module>
+     File "<stdin>", line 3, in <module>
+     File "<stdin>", line 3, in <module>
+   ExceptionGroup: one
+      ------------------------------------------------------------
+      TypeError: b
+      ------------------------------------------------------------
+      ExceptionGroup: two
+         ------------------------------------------------------------
+         TypeError: c
+   ------------------------------------------------------------
+   Traceback (most recent call last):
+     File "<stdin>", line 3, in <module>
+     File "<stdin>", line 3, in <module>
+   ExceptionGroup: one
+      ------------------------------------------------------------
+      ValueError: a
+      ------------------------------------------------------------
+      ExceptionGroup: two
+         ------------------------------------------------------------
+         KeyError: 'd'
+>>>
 ```
+
 
 ### "continue", "break", and "return" in "except*"
 
