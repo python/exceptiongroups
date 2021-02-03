@@ -150,7 +150,7 @@ the entire exception tree is copied. There is no need to copy the leaf
 exceptions and the metadata elements (cause, context, traceback).
 
 If a split is trivial (one side is empty), then None is returned for the
-other size:
+other side:
 
 ```python
 >>> other_errors.split(lambda e: isinstance(e, SyntaxError))
@@ -384,7 +384,7 @@ reraised exceptions into the same structure.
   it gets its "working set" of errors linked to it via the `__context__`
   attribute.
 
-* After all `except*` clause were evaluated, there are the following
+* After all `except*` clause have been evaluated, there are the following
  possibilities:
 
 1. Both the "incoming" `ExceptionGroup` and the two result lists are empty.
