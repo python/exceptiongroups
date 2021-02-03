@@ -60,7 +60,7 @@ unwinds. Several real world use cases are listed below.
   sidestepping the multiple exception problem. With the features we propose
   here, it would be possible for `__exit__` to raise an `ExceptionGroup`
   containing its own errors as well as the user's errors as unrelated errors,
-  and this would allows the user to catch their own exceptions by their types.
+  and this would allow the user to catch their own exceptions by their types.
 
 
 ## Rationale
