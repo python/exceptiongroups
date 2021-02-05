@@ -14,20 +14,63 @@ group of unrelated exceptions being propagated together.
 ## Motivation
 
 The interpreter is currently able to propagate at most one exception at a
-time. The chaining features introduced in PEP3134 [reference] link together
-exceptions that are related to each other as the cause or context, but there
-are situations where there are multiple unrelated exceptions that need to be
-propagated together as the stack unwinds. Several real world use cases are
-listed below.
+time. The chaining features introduced in
+[PEP 3134](https://www.python.org/dev/peps/pep-3134/) link together exceptions that are
+related to each other as the cause or context, but there are situations where
+multiple unrelated exceptions need to be propagated together as the stack
+unwinds. Several real world use cases are listed below.
 
-[TODO: flesh these out]
-* asyncio programs, trio, etc
+* **Concurrent errors**. Libraries for async concurrency provide APIs to invoke
+  multiple tasks and return their results in aggregate. There isn't currently
+  a good way for such libraries to handle situations where multiple tasks
+  raise exceptions. The Python standard library's
+  [`asyncio.gather()`](https://docs.python.org/3/library/asyncio-task.html#asyncio.gather)
+  function provides two options: raise the first exception, or return the
+  exceptions in the results list.  The [Trio](https://trio.readthedocs.io/en/stable/)
+  library has a `MultiError` exception type which it raises to report a
+  collection of errors. Work on this PEP was initially motivated by the
+  difficulties in handling `MultiError`s, which are detailed in a design
+  document for an
+  [improved version, `MultiError2`]([https://github.com/python-trio/trio/issues/611).
+  That document demonstrates how difficult it is to create an effective API
+  for reporting and handling multiple errors without the language changes we
+  are proposing.
 
-* Multiple errors from separate retries of an operation [https://bugs.python.org/issue29980]
+* **Multiple failures when retrying an operation.** The Python standard library's
+  `socket.create_connection` may attempt to connect to different addresses,
+  and if all attempts fail it needs to report that to the user. It is an open
+  issue how to aggregate these errors, particularly when they are different
+  [[Python issue 29980](https://bugs.python.org/issue29980)].
 
-* Situations where multiple unrelated exceptions may be of interest to calling code [https://bugs.python.org/issue40857]
+* **Multiple user callbacks fail.** The pytest library allows users to register
+  finalizers which are executed at teardown. If more than one of these
+  finalizers raises an exception, only the first is reported to the user. This
+  can be improved with `ExceptionGroup`s, as explained in this issue by pytest
+  developer Ran Benita [[Pytest issue 8217](https://github.com/pytest-dev/pytest/issues/8217)]
 
-* Multiple teardowns in pytest raising exceptions [https://github.com/pytest-dev/pytest/issues/8217]
+* **Multiple errors in a complex calculation.** The Hypothesis library performs
+  automatic bug reduction (simplifying code that demonstrates a bug). In the
+  process it may find variations that generate different errors, and
+  (optionally) reports all of them
+  [[Hypothesis documentation](https://hypothesis.readthedocs.io/en/latest/settings.html#hypothesis.settings.report_multiple_bugs)].
+  An `ExceptionGroup` mechanism as we are proposing here can resolve some of
+  the difficulties with debugging that are mentioned in the link above, and
+  which are due to the loss of context/cause information (communicated
+  by Hypothesis Core Developer Zac Hatfield-Dodds).
+
+* **Errors in wrapper code.** The Python standard library's
+  `tempfile.TemporaryDirectory` context manager
+  had an issue where an exception raised during cleanup in `__exit__`
+  effectively masked an exception that the user's code raised inside the context
+  manager scope. While the user's exception was chained as the context of the
+  cleanup error, it was not caught by the user's except clause
+  [[Python issue 40857](https://bugs.python.org/issue40857)].
+  The issue was resolved by making the cleanup code ignore errors, thus
+  sidestepping the multiple exception problem. With the features we propose
+  here, it would be possible for `__exit__` to raise an `ExceptionGroup`
+  containing its own errors as well as the user's errors as unrelated errors,
+  and this would allow the user to catch their own exceptions by their types.
+
 
 ## Rationale
 
