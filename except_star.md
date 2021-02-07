@@ -824,7 +824,8 @@ def foo():
 
 ## Backwards Compatibility
 
-Backwards compatibility was a requirement of our design:
+Backwards compatibility was a requirement of our design, and the changes we
+propose in this PEP will not break any existing code:
 
 * The addition of a new builtin exception type `ExceptionGroup` does not impact
 existing programs. The way that existing exceptions are handled and displayed
@@ -833,6 +834,22 @@ does not change in any way.
 * The behaviour of `except` is unchanged so existing code will continue to work.
 Programs will only be impacted by the changes proposed in this PEP once they
 begin to use `ExceptionGroup`s and `except*`.
+
+
+Once programs begin to use these features, there will be migration issues to
+consider:
+
+* An `except Exception:` clause will not catch `ExceptionGroup`s because they
+are derived from `BaseException`. Any such clause will need to be replaced
+by `except (Exception, ExceptionGroup):` or `except *Exception:`.
+
+* Similarly, any `except T:` clause that wraps code which is now potentially
+raising `ExceptionGroup` needs to become `except *T:`, and its body may need
+to be updated.
+
+* Libraries that need to support older python versions will not be able to use
+`except*`, and may need to handle `ExceptionGroup`s raised in user code through
+the low-low_level `ExceptionGroup` APIs.
 
 
 ## Security Implications
@@ -971,7 +988,7 @@ block can be used instead to achieve the same result.
   programs:
   https://github.com/python/exceptiongroups/issues/3#issuecomment-716203284
 
-* The issue where the concept of `ExceptionGroups` was first formalized:
+* The issue where the `except*` concept was first formalized:
   https://github.com/python/exceptiongroups/issues/4
 
 
