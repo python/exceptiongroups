@@ -94,8 +94,8 @@ The purpose of this PEP, then, is to add the `except*` syntax for handling
 `ExceptionGroups`s in the interpreter, which in turn requires that
 `ExceptionGroup` is added as a builtin type. The semantics of handling
 `ExceptionGroup`s are not backwards compatible with the current exception
-handling semantics, so we could not modify the behaviour of the `except`
-keyword and instead added the new `except*` syntax.
+handling semantics, so we are not proposing to modify the behaviour of the
+`except` keyword but rather to add the new `except*` syntax.
 
 
 ## Specification
@@ -967,22 +967,15 @@ a cleanup.
 
 ## Backwards Compatibility
 
-The behaviour of `except` is unchanged so existing code will continue to work.
+Backwards compatibility was a requirement of our design:
 
-### Adoption of try..except* syntax
+* The addition of a new builtin exception type `ExceptionGroup` does not impact
+existing programs. The way that existing exceptions are handled and displayed
+does not change in any way.
 
-Application code typically can dictate what version of Python it requires.
-Which makes introducing TaskGroups and the new `except*` clause somewhat
-straightforward. Upon switching to Python 3.10, the application developer
-can grep their application code for every *control flow* exception they handle
-(search for `except CancelledError`) and mechanically change it to
-`except *CancelledError`.
-
-Library developers, on the other hand, will need to maintain backwards
-compatibility with older Python versions, and therefore they wouldn't be able
-to start using the new `except*` syntax right away.  They will have to use
-the new ExceptionGroup low-level APIs along with `try..except ExceptionGroup`
-to support running user code that can raise exception groups.
+* The behaviour of `except` is unchanged so existing code will continue to work.
+Programs will only be impacted by the changes proposed in this PEP once they
+begin to use `ExceptionGroup`s and `except*`.
 
 
 ## Security Implications
