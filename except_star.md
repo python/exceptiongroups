@@ -31,7 +31,7 @@ unwinds. Several real world use cases are listed below.
   collection of errors. Work on this PEP was initially motivated by the
   difficulties in handling `MultiError`s, which are detailed in a design
   document for an
-  [improved version, `MultiError2`]([https://github.com/python-trio/trio/issues/611).
+  [improved version, `MultiError2`](https://github.com/python-trio/trio/issues/611).
   That document demonstrates how difficult it is to create an effective API
   for reporting and handling multiple errors without the language changes we
   are proposing.
@@ -75,17 +75,18 @@ unwinds. Several real world use cases are listed below.
 ## Rationale
 
 Grouping several exceptions together can be done without changes to the
-language, simply by creating a container exception type. Trio is an example of
-a library that has made use of this technique in its `MultiError` type
-[reference to Trio MultiError]. However, such approaches require calling code
-to catch the container exception type, and then inspect it to determine the
-types of errors that had occurred, extract the ones it wants to handle and
-reraise the rest.
+language, simply by creating a container exception type.
+[Trio](https://trio.readthedocs.io/en/stable/) is an example of a library that
+has made use of this technique in its
+[`MultiError` type](https://trio.readthedocs.io/en/stable/reference-core.html#trio.MultiError).
+However, such approaches require calling code to catch the container exception
+type, and then inspect it to determine the types of errors that had occurred,
+extract the ones it wants to handle and reraise the rest.
 
 Changes to the language are required in order to extend support for
 `ExceptionGroup`s in the style of existing exception handling mechanisms. At
 the very least we would like to be able to catch an `ExceptionGroup` only if
-it contains an exception type that we that chose to handle. Exceptions of
+it contains an exception type that we choose to handle. Exceptions of
 other types in the same `ExceptionGroup` need to be automatically reraised,
 otherwise it is too easy for user code to inadvertently swallow exceptions
 that it is not handling.
@@ -94,7 +95,7 @@ The purpose of this PEP, then, is to add the `except*` syntax for handling
 `ExceptionGroups`s in the interpreter, which in turn requires that
 `ExceptionGroup` is added as a builtin type. The semantics of handling
 `ExceptionGroup`s are not backwards compatible with the current exception
-handling semantics, so we are not proposing to modify the behaviour of the
+handling semantics, so we are not proposing to modify the behavior of the
 `except` keyword but rather to add the new `except*` syntax.
 
 
@@ -115,7 +116,7 @@ The `ExceptionGroup` class exposes these parameters in the fields `message`
 and `errors`.  A nested exception can also be an `ExceptionGroup` so the class
 represents a tree of exceptions, where the leaves are plain exceptions and
 each internal node represent a time at which the program grouped some
-unrelated exceptions into a new `ExceptionGroup`.
+unrelated exceptions into a new `ExceptionGroup` and raised them together.
 
 The `ExceptionGroup.subgroup(condition)` method gives us a way to obtain an
 `ExceptionGroup` that has the same metadata (cause, context, traceback) as
@@ -163,11 +164,11 @@ new copy. Leaf exceptions are not copied, nor are `ExceptionGroup`s which are
 fully contained in the result. When it is necessary to partition an
 `ExceptionGroup` because the condition holds for some, but not all of its
 contained exceptions, a new `ExceptionGroup` is created but the `__cause__`,
-`__context__` and `__traceback__` field are copied by reference, so are shared
+`__context__` and `__traceback__` fields are copied by reference, so are shared
 with the original `eg`.
 
-If both the subgroup and its complement are needed, the `ExceptionGroup.split`
-method can be used:
+If both the subgroup and its complement are needed, the
+`ExceptionGroup.split(condition)` method can be used:
 
 ```Python
 >>> type_errors, other_errors = eg.split(lambda e: isinstance(e, TypeError))
@@ -270,7 +271,7 @@ ExceptionGroup: two
 
 ### except*
 
-We're proposing to introduce a new variant of the `try..except` syntax to
+We are proposing to introduce a new variant of the `try..except` syntax to
 simplify working with exception groups. The `*` symbol indicates that multiple
 exceptions can be handled by each `except*` clause:
 
@@ -299,12 +300,11 @@ For example, suppose that the body of the `try` block above raises
 `eg = ExceptionGroup('msg', [FooError(1), FooError(2), BazError()])`.
 The `except*` clauses are evaluated in order by calling `split` on the
 `unhandled` `ExceptionGroup`, which is initially equal to `eg` and then shrinks
-as exceptions are matched and extracted from it.
-
-In our example, `unhandled.split(SpamError)` returns `(None, unhandled)` so the
-first `except*` block is not executed and `unhandled` is unchanged. For the
-second block, `match, rest = unhandled.split(FooError)` returns a non-trivial
-split with `match = ExceptionGroup('msg', [FooError(1), FooError(2)])`
+as exceptions are matched and extracted from it.  In the first `except*` clause,
+`unhandled.split(SpamError)` returns `(None, unhandled)` so the body of this
+block is not executed and `unhandled` is unchanged. For the second block,
+`unhandled.split(FooError)` returns a non-trivial split `(match, rest)` with
+`match = ExceptionGroup('msg', [FooError(1), FooError(2)])`
 and `rest = ExceptionGroup('msg', [BazError()])`. The body of this `except*`
 block is executed, with the value of `e` and `sys.exc_info()` set to `match`.
 Then, `unhandled` is set to `rest`.
@@ -332,7 +332,7 @@ InterruptedError
 BlockingIOError
 ```
 
-The order of `except*` clauses is significant just like with the regular
+The order of `except*` clauses is significant just like with the traditional
 `try..except`:
 
 ```python
@@ -398,8 +398,8 @@ propagated: ExceptionGroup('msg', [KeyError('e')])
 
 If the exception raised inside the `try` body is not of type `ExceptionGroup`,
 we call it a `naked` exception. If its type matches one of the `except*`
-clauses, it is wrapped by an `ExceptionGroup` with an empty message string
-when caught. This is to make the type of `e` consistent and statically known:
+clauses, it is caught and wrapped by an `ExceptionGroup` with an empty message
+string. This is to make the type of `e` consistent and statically known:
 
 ```python
 >>> try:
@@ -454,7 +454,7 @@ ZeroDivisionError: division by zero  |
 ```
 
 This holds for `ExceptionGroup`s as well, but the situation is now more complex
-because there can exceptions raised and reraised from multiple `except*`
+because there can be exceptions raised and reraised from multiple `except*`
 clauses, as well as unhandled exceptions that need to propagate.
 The interpreter needs to combine all those exceptions into a result, and
 raise that.
@@ -466,9 +466,9 @@ metadata - the traceback contains the line from which it was raised, its
 cause is whatever it may have been explicitly chained to, and its context is the
 value of `sys.exc_info()` in the `except*` clause of the raise.
 
-In the aggregated `ExceptionGroup`,  the reraised and unhandled exceptions have
+In the aggregated `ExceptionGroup`, the reraised and unhandled exceptions have
 the same relative structure as in the original exception, as if they were split
-off  together in one `subgroup` call. For example, in the snippet below the
+off together in one `subgroup` call. For example, in the snippet below the
 inner `try-except*` block raises an `ExceptionGroup` that contains all
 `ValueError`s and `TypeError`s merged back into the same shape they had in
 the original `ExceptionGroup`:
@@ -747,7 +747,7 @@ except *OSerror as errors:
 It is important to point out that the `ExceptionGroup` bound to `e` is an
 ephemeral object. Raising it via `raise` or `raise e` will not cause changes
 to the overall shape of the `ExceptionGroup`.  Any modifications to it will
-likely get lost:
+likely be lost:
 
 ```python
 >>> eg = ExceptionGroup("eg", [TypeError(12)])
@@ -765,8 +765,8 @@ likely get lost:
 
 ### Forbidden Combinations
 
-* It is not possible to use both regular `except` blocks and the new `except*`
-clauses in the same `try` statement.The following example would raise a
+* It is not possible to use both traditional `except` blocks and the new
+`except*` clauses in the same `try` statement. The following example is a
 `SyntaxErorr`:
 
 ```python
@@ -810,7 +810,7 @@ This is because the exceptions in an `ExceptionGroup` are assumed to be
 independent, and the presence or absence of one of them should not impact
 handling of the others, as could happen if we allow an `except*` clause to
 change the way control flows through other clauses.  We believe that this is
-error prone and there are better ways to implement a check like this:
+error prone and there are clearer ways to implement a check like this:
 
 ```python
 def foo():
@@ -819,7 +819,7 @@ def foo():
   except *A:
     return 1   # <- SyntaxError
   except *B as e:
-    raise TypeError("Can't have B without A!") from e
+    raise TypeError("Can't have B without A!")
 ```
 
 ## Backwards Compatibility
@@ -857,8 +857,24 @@ to be updated.
 
 ## Reference Implementation
 
-[An experimental implementation](https://github.com/iritkatriel/cpython/tree/exceptionGroup-stage5).
+We developed these concepts (and the examples for this PEP) with
+[an experimental implementation](https://github.com/iritkatriel/cpython/tree/exceptionGroup-stage5).
 
+It has the builtin `ExceptionGroup` along with the changes to the traceback
+formatting code, in addition to the grammar and interpreter changes required
+to support `except*`.
+
+Two opcodes were added: one implements the exception type match check via
+`ExceptionGroup.split()`, and the other is used at the end of a `try-except`
+construct to merge all unhandled, raised and reraised exceptions (if any).
+The raised/reraised exceptions are collected in a list on the runtime stack.
+For this purpose, the body of each `except*` clause is wrapped in a traditional
+`try-except` which captures any exceptions raised. Both raised and reraised
+exceptions are collected in one list. When the time comes to merge them into
+a result, the raised and reraised exceptions are distinguished by comparing
+their metadata fields (context, cause, traceback) with those of the originally
+raised exception. As mentioned above, the reraised exceptions have the same
+metadata as the original, while raised ones do not.
 
 ## Rejected Ideas
 
@@ -980,6 +996,13 @@ only naked exceptions of type `T`, while `except *T:` handles `T` in
 to be useful in practice, and if it is needed then the nested `try-except`
 block can be used instead to achieve the same result.
 
+### `try*` instead of `except*`
+
+Since either all or none of the clauses of a `try` construct are `except*`,
+we considered changing the syntax of the `try` instead of all the `except*`
+clauses. We rejected this because it would be less obvious. The fact that we
+are handling `ExceptionGroup`s of `T` rather than only naked `T`s should be
+in the same place where we state `T`.
 
 ## See Also
 
