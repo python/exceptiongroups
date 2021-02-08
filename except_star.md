@@ -848,8 +848,7 @@ raising `ExceptionGroup` needs to become `except *T:`, and its body may need
 to be updated.
 
 * Libraries that need to support older python versions will not be able to use
-`except*`, and may need to handle `ExceptionGroup`s raised in user code through
-the low-low_level `ExceptionGroup` APIs.
+`except*` or raise `ExceptionGroup`s.
 
 
 ## Security Implications
