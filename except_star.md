@@ -86,7 +86,7 @@ extract the ones it wants to handle and reraise the rest.
 Changes to the language are required in order to extend support for
 `ExceptionGroup`s in the style of existing exception handling mechanisms. At
 the very least we would like to be able to catch an `ExceptionGroup` only if
-it contains an exception type that we chose to handle. Exceptions of
+it contains an exception type that we choose to handle. Exceptions of
 other types in the same `ExceptionGroup` need to be automatically reraised,
 otherwise it is too easy for user code to inadvertently swallow exceptions
 that it is not handling.
