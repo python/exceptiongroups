@@ -94,8 +94,8 @@ The purpose of this PEP, then, is to add the `except*` syntax for handling
 `ExceptionGroups`s in the interpreter, which in turn requires that
 `ExceptionGroup` is added as a builtin type. The semantics of handling
 `ExceptionGroup`s are not backwards compatible with the current exception
-handling semantics, so we could not modify the behaviour of the `except`
-keyword and instead added the new `except*` syntax.
+handling semantics, so we are not proposing to modify the behaviour of the
+`except` keyword but rather to add the new `except*` syntax.
 
 
 ## Specification
@@ -822,167 +822,33 @@ def foo():
     raise TypeError("Can't have B without A!") from e
 ```
 
-## Design Considerations
-
-### Why try..except* syntax
-
-Fundamentally there are two kinds of exceptions: *control flow exceptions*
-(e.g. `KeyboardInterrupt` or `asyncio.CancelledError`) and
-*operation exceptions* (e.g. `TypeError` or `KeyError`).
-
-When writing async/await code that uses a concept of TaskGroups (or Trio's
-nurseries) to schedule different code concurrently, the users should
-approach these two kinds in a fundamentally different way.
-
-*Operation exceptions* such as `KeyError` should be handled within
-the async Task that runs the code.  E.g. this is what users should do:
-
-```python
-try:
-  dct[key]
-except KeyError:
-  # handle the exception
-```
-
-and this is what they shouldn't do:
-
-```python
-try:
-  async with asyncio.TaskGroup() as g:
-    g.create_task(task1); g.create_task(task2)
-except *KeyError:
-  # handling KeyError here is meaningless, there's
-  # no context to do anything with it but to log it.
-```
-
-*Control flow exceptions* are different. If, for example, we want to
-cancel an asyncio Task that spawned other multiple concurrent Tasks in it
-with a an `asyncio.TaskGroup`, the following will happen:
-
-* CancelledErrors will be propagated to all still running tasks within
-  the group;
-
-* CancelledErrors will be propagated to the Task that scheduled the group and
-  bubble up from `async with TaskGroup()`;
-
-* CancelledErrors will be propagated to the outer Task until either the entire
-  program shuts down with a `CancelledError`, or the cancellation is handled
-  and silenced (e.g. by `asyncio.wait_for()`).
-
-*Control flow exceptions* alter the execution flow of a program.
-Therefore it is sometimes desirable for the user to react to them and
-run code, for example, to free resources.
-
-Suppose we have the `except *ExceptionType` syntax that only matches
-`ExceptionGroup[ExceptionType]` exceptions (a naked `ExceptionType` wouldn't
-be matched).  This means that we'd see a lot of code duplication:
-
-
-```python
-try:
-  async with asyncio.TaskGroup() as g:
-    g.create_task(task1); g.create_task(task2)
-except *CancelledError:
-  log('cancelling server bootstrap')
-  await server.stop()
-  raise
-except CancelledError:
-  # Same code, really.
-  log('cancelling server bootstrap')
-  await server.stop()
-  raise
-```
-
-Which leads to the conclusion that `except *CancelledError as e` should both:
-
-* catch a naked `CancelledError`, wrap it in an `ExceptionGroup` and bind it
-  to `e`. The type of `e` would always be `ExceptionGroup[CancelledError]`.
-
-* if an exception group is propagating through the `try`,
-  `except *CancelledError` should split the group and handle all exceptions
-  at once with one run of the code in `except *CancelledError` (and not
-  run the code for every matched individual exception.)
-
-Why "handle all exceptions at once"? Why not run the code in the except
-clause for every matched exception that we have in the group?
-Basically because there's no need to. As we mentioned above, catching
-*operation exceptions* should be done with the regular `except KeyError`
-within the Task boundary, where there's context to handle a `KeyError`.
-Catching *control flow exceptions* is needed to **react** to a global
-signal, do cleanup or logging, but ultimately to either **stop** the signal
-**or propagate** it up the caller chain.
-
-Separating exception kinds to two distinct groups (operation & control flow)
-leads to another conclusion: an individual `try..except` block usually handles
-either the former or the latter, **but not a mix of both**. Which leads to the
-conclusion that `except *CancelledError` should switch the behavior of the
-entire `try` block to make it run several of its `except*` clauses if
-necessary.  Therefore:
-
-```python
-try:
-  # code
-except KeyError:
-  # handle
-except ValueError:
-  # handle
-```
-
-is a regular `try..except` block to be used for reacting to
-*operation exceptions*. And:
-
-```python
-try:
-  # code
-except *TimeoutError:
-  # handle
-except *CancelledError:
-  # handle
-```
-
-is an entirely different construct meant to make it easier to react to
-*control flow* signals.  When specified that way, it is expected from the user
-standpoint that both `except` clauses can be potentially run.
-
-Lastly, code that combines handling of both operation and control flow
-exceptions is unrealistic and impractical, e.g.:
-
-```python
-try:
-  async with TaskGroup() as g:
-    g.create_task(task1())
-    g.create_task(task2())
-except ValueError:
-  # handle ValueError
-except *CancelledError:
-  # handle cancellation
-  raise
-```
-
-In the above snippet it is impossible to attribute which task raised a
-`ValueError` -- `task1` or `task2`. So it really should be handled directly
-in those tasks. Whereas handling `*CancelledError` makes sense -- it means that
-the current task is being canceled and this might be a good opportunity to do
-a cleanup.
-
 ## Backwards Compatibility
 
-The behaviour of `except` is unchanged so existing code will continue to work.
+Backwards compatibility was a requirement of our design, and the changes we
+propose in this PEP will not break any existing code:
 
-### Adoption of try..except* syntax
+* The addition of a new builtin exception type `ExceptionGroup` does not impact
+existing programs. The way that existing exceptions are handled and displayed
+does not change in any way.
 
-Application code typically can dictate what version of Python it requires.
-Which makes introducing TaskGroups and the new `except*` clause somewhat
-straightforward. Upon switching to Python 3.10, the application developer
-can grep their application code for every *control flow* exception they handle
-(search for `except CancelledError`) and mechanically change it to
-`except *CancelledError`.
+* The behaviour of `except` is unchanged so existing code will continue to work.
+Programs will only be impacted by the changes proposed in this PEP once they
+begin to use `ExceptionGroup`s and `except*`.
 
-Library developers, on the other hand, will need to maintain backwards
-compatibility with older Python versions, and therefore they wouldn't be able
-to start using the new `except*` syntax right away.  They will have to use
-the new ExceptionGroup low-level APIs along with `try..except ExceptionGroup`
-to support running user code that can raise exception groups.
+
+Once programs begin to use these features, there will be migration issues to
+consider:
+
+* An `except Exception:` clause will not catch `ExceptionGroup`s because they
+are derived from `BaseException`. Any such clause will need to be replaced
+by `except (Exception, ExceptionGroup):` or `except *Exception:`.
+
+* Similarly, any `except T:` clause that wraps code which is now potentially
+raising `ExceptionGroup` needs to become `except *T:`, and its body may need
+to be updated.
+
+* Libraries that need to support older python versions will not be able to use
+`except*` or raise `ExceptionGroup`s.
 
 
 ## Security Implications
@@ -1031,6 +897,89 @@ would be too confusing for users at this time, so it is more appropriate
 to introduce the `except*` syntax for `ExceptionGroup`s while `except`
 continues to be used for simple exceptions.
 
+### Applying an `except*` clause on one exception at a time
+
+We considered making `except*` clauses always execute on a single exception,
+possibly executing the same clause multiple times when it matches multiple
+exceptions. We decided instead to execute each `except*` clause at most once,
+giving it an `ExceptionGroup` that contains all matching exceptions. The reason
+for this decision was the observation that when a program needs to know the
+patricular context of an exception it is handling, it handles it before
+grouping it with other exceptions and raising them together.
+
+For example, `KeyError` is an exception that typically relates to a certain
+operation. Any recovery code would be local to the place where the error
+occurred, and would use the traditional `except`:
+
+```python
+try:
+  dct[key]
+except KeyError:
+  # handle the exception
+```
+
+It is unlikely that asyncio users would want to do something like this:
+
+```python
+try:
+  async with asyncio.TaskGroup() as g:
+    g.create_task(task1); g.create_task(task2)
+except *KeyError:
+  # handling KeyError here is meaningless, there's
+  # no context to do anything with it but to log it.
+```
+
+When a program handles a collection of exceptions that were aggregated into
+an exception group, it would not typically attempt to recover from any
+particular failed operation, but will rather use the types of the errors to
+determine how they should impact the program's control flow or what logging
+or cleanup is required. This decision is likely to be the same whether the group
+contains a single or multiple instances of something like a `KeyboardInterrupt`
+or `asyncio.CancelledError`.  Therefore, it is more convenient to handle all
+exceptions matching an `except*` at once.  If it does turn out to be necessary,
+the handler can inpect the `ExceptionGroup` and process the individual
+exceptions in it.
+
+### Not matching naked exceptions in `except*`
+
+We considered the option of making `except *T` match only `ExceptionGroup`s
+that contain `T`s, but not naked `T`s. To see why we thought this would not be a
+desirable feature, return to the distinction in the previous paragraph between
+operation errors and control flow exceptions. If we don't know whether
+we should expect naked exceptions or `ExceptionGroup`s from the body of a
+`try` block,  then we're not in the position of handling operation errors.
+Rather, we are likely calling some callback and will be handling errors to make
+control flow decisions. We are likely to do the same thing whether we catch a
+naked exception of type `T` or an `ExceptionGroup` with one or more `T`s.
+Therefore, the burden of having to explicitly handle both is not likely to have
+semantic benefit.
+
+If it does turn out to be necessary to make the distinction, it is always
+possible to nest in the `try-except*` clause an additional `try-except` clause
+which intercepts and handles a naked exception before the `except*` clause
+has a change to wrap it in an  `ExceptionGroup`. In this case the overhead
+of specifying both is not addition burden - we really do need to write a
+separate code block to handle each case:
+
+```python
+try:
+  try:
+    ...
+  except SomeError:
+    # handle the naked exception
+except *SomeError:
+  # handle the ExceptionGroup
+```
+
+### Allow mixing `except:` and `except*:` in the same `try`
+
+This option was rejected because it adds complexity without adding useful
+semantics. Presumably the intention would be that an `except T:` block handles
+only naked exceptions of type `T`, while `except *T:` handles `T` in
+`ExceptionGroup`s. We already discussed above why this is unlikely
+to be useful in practice, and if it is needed then the nested `try-except`
+block can be used instead to achieve the same result.
+
 
 ## See Also
 
@@ -1038,7 +987,7 @@ continues to be used for simple exceptions.
   programs:
   https://github.com/python/exceptiongroups/issues/3#issuecomment-716203284
 
-  * The issue where this concept was first formalized:
+* The issue where the `except*` concept was first formalized:
   https://github.com/python/exceptiongroups/issues/4
 
 
