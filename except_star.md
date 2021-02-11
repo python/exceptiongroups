@@ -92,7 +92,7 @@ otherwise it is too easy for user code to inadvertently swallow exceptions
 that it is not handling.
 
 The purpose of this PEP, then, is to add the `except*` syntax for handling
-`ExceptionGroups`s in the interpreter, which in turn requires that
+`ExceptionGroup`s in the interpreter, which in turn requires that
 `ExceptionGroup` is added as a builtin type. The semantics of handling
 `ExceptionGroup`s are not backwards compatible with the current exception
 handling semantics, so we are not proposing to modify the behavior of the
@@ -477,7 +477,7 @@ the original `ExceptionGroup`:
 >>> try:
 ...   try:
 ...     raise ExceptionGroup("eg",
-...                           [ValueError(1),
+...                          [ValueError(1),
 ...                           TypeError(2),
 ...                           OSError(3),
 ...                           ExceptionGroup(
@@ -487,12 +487,12 @@ the original `ExceptionGroup`:
 ...     print(f'*ValueError: {e!r}')
 ...     raise
 ...   except *OSError as e:
-...     print(f'*OsError: {e!r}')
+...     print(f'*OSError: {e!r}')
 ... except ExceptionGroup as e:
 ...   print(repr(e))
 ...
 *ValueError: ExceptionGroup('eg', [ValueError(1), ExceptionGroup('nested', [ValueError(6)])])
-*OsError: ExceptionGroup('eg', [OSError(3), ExceptionGroup('nested', [OSError(4)])])
+*OSError: ExceptionGroup('eg', [OSError(3), ExceptionGroup('nested', [OSError(4)])])
 ExceptionGroup('eg', [ValueError(1), TypeError(2), ExceptionGroup('nested', [TypeError(5), ValueError(6)])])
 >>>
 ```
@@ -847,7 +847,7 @@ by `except (Exception, ExceptionGroup):` or `except *Exception:`.
 raising `ExceptionGroup` needs to become `except *T:`, and its body may need
 to be updated.
 
-* Libraries that need to support older python versions will not be able to use
+* Libraries that need to support older Python versions will not be able to use
 `except*` or raise `ExceptionGroup`s.
 
 
@@ -906,7 +906,7 @@ the traceback mechanism as it is and modify the traceback display code.
 We considered introducing a new keyword (such as `catch`) which can be used
 to handle both plain exceptions and `ExceptionGroup`s. Its semantics would
 be the same as those of `except*` when catching an `ExceptionGroup`, but
-it would not wrap plain a exception to create an `ExceptionGroup`. This
+it would not wrap a plain exception to create an `ExceptionGroup`. This
 would have been part of a long term plan to replace `except` by `catch`,
 but we decided that deprecating `except` in favour of an enhanced keyword
 would be too confusing for users at this time, so it is more appropriate
@@ -920,7 +920,7 @@ possibly executing the same clause multiple times when it matches multiple
 exceptions. We decided instead to execute each `except*` clause at most once,
 giving it an `ExceptionGroup` that contains all matching exceptions. The reason
 for this decision was the observation that when a program needs to know the
-patricular context of an exception it is handling, it handles it before
+particular context of an exception it is handling, it handles it before
 grouping it with other exceptions and raising them together.
 
 For example, `KeyError` is an exception that typically relates to a certain
@@ -974,7 +974,7 @@ If it does turn out to be necessary to make the distinction, it is always
 possible to nest in the `try-except*` clause an additional `try-except` clause
 which intercepts and handles a naked exception before the `except*` clause
 has a change to wrap it in an  `ExceptionGroup`. In this case the overhead
-of specifying both is not addition burden - we really do need to write a
+of specifying both is not additional burden - we really do need to write a
 separate code block to handle each case:
 
 ```python
