@@ -117,6 +117,7 @@ and `errors`.  A nested exception can also be an `ExceptionGroup` so the class
 represents a tree of exceptions, where the leaves are plain exceptions and
 each internal node represent a time at which the program grouped some
 unrelated exceptions into a new `ExceptionGroup` and raised them together.
+The `ExceptionGroup` class is final, i.e., it cannot be subclassed.
 
 The `ExceptionGroup.subgroup(condition)` method gives us a way to obtain an
 `ExceptionGroup` that has the same metadata (cause, context, traceback) as
@@ -332,7 +333,7 @@ InterruptedError
 BlockingIOError
 ```
 
-The order of `except*` clauses is significant just like with the traditional
+The order of `except*` clauses is significant just like with the regular
 `try..except`:
 
 ```python
@@ -778,8 +779,8 @@ except *CancelledError:  # <- SyntaxError:
    pass                  #    combining `except` and `except*` is prohibited
 ```
 
-* It is possible to catch the `ExceptionGroup` type with a plain except, but not
-with an `except*` because the latter is ambiguous:
+* It is possible to catch the `ExceptionGroup` type with `except`, but not
+with `except*` because the latter is ambiguous:
 
 ```python
 try:
@@ -881,14 +882,14 @@ metadata as the original, while raised ones do not.
 ### The ExceptionGroup API
 
 We considered making `ExceptionGroup`s iterable, so that `list(eg)` would
-produce a flattened list of the plain exceptions contained in the group.
+produce a flattened list of the leaf exceptions contained in the group.
 We decided that this would not be not be a sound API, because the metadata
 (cause, context and traceback) of the individual exceptions in a group are
 incomplete and this could create problems.  If use cases arise where this
 can be helpful, we can document (or even provide in the standard library)
 a sound recipe for accessing an individual exception: use the `split()`
 method to create an `ExceptionGroup` for a single exception and then
-transform it into a plain exception with the current metadata.
+extract the contained exception with the correct metadata.
 
 ### Traceback Representation
 
@@ -904,9 +905,9 @@ the traceback mechanism as it is and modify the traceback display code.
 ### A full redesign of `except`
 
 We considered introducing a new keyword (such as `catch`) which can be used
-to handle both plain exceptions and `ExceptionGroup`s. Its semantics would
+to handle both naked exceptions and `ExceptionGroup`s. Its semantics would
 be the same as those of `except*` when catching an `ExceptionGroup`, but
-it would not wrap a plain exception to create an `ExceptionGroup`. This
+it would not wrap a naked exception to create an `ExceptionGroup`. This
 would have been part of a long term plan to replace `except` by `catch`,
 but we decided that deprecating `except` in favour of an enhanced keyword
 would be too confusing for users at this time, so it is more appropriate
@@ -1002,7 +1003,7 @@ Since either all or none of the clauses of a `try` construct are `except*`,
 we considered changing the syntax of the `try` instead of all the `except*`
 clauses. We rejected this because it would be less obvious. The fact that we
 are handling `ExceptionGroup`s of `T` rather than only naked `T`s should be
-in the same place where we state `T`.
+specified in the same place where we state `T`.
 
 ## See Also
 
