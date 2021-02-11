@@ -859,11 +859,11 @@ to be updated.
 ## Reference Implementation
 
 We developed these concepts (and the examples for this PEP) with
-[an experimental implementation](https://github.com/iritkatriel/cpython/tree/exceptionGroup-stage5).
+the help of [a reference implementation](https://github.com/iritkatriel/cpython/tree/exceptionGroup-stage5).
 
 It has the builtin `ExceptionGroup` along with the changes to the traceback
-formatting code, in addition to the grammar and interpreter changes required
-to support `except*`.
+formatting code, in addition to the grammar, compiler and interpreter changes
+required to support `except*`.
 
 Two opcodes were added: one implements the exception type match check via
 `ExceptionGroup.split()`, and the other is used at the end of a `try-except`
@@ -871,11 +871,11 @@ construct to merge all unhandled, raised and reraised exceptions (if any).
 The raised/reraised exceptions are collected in a list on the runtime stack.
 For this purpose, the body of each `except*` clause is wrapped in a traditional
 `try-except` which captures any exceptions raised. Both raised and reraised
-exceptions are collected in one list. When the time comes to merge them into
-a result, the raised and reraised exceptions are distinguished by comparing
+exceptions are collected in the same list. When the time comes to merge them
+into a result, the raised and reraised exceptions are distinguished by comparing
 their metadata fields (context, cause, traceback) with those of the originally
 raised exception. As mentioned above, the reraised exceptions have the same
-metadata as the original, while raised ones do not.
+metadata as the original, while the raised ones do not.
 
 ## Rejected Ideas
 
