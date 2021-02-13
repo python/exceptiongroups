@@ -1,4 +1,5 @@
-# Introducing try..except* syntax
+
+# except*
 
 
 ## Abstract
@@ -852,8 +853,6 @@ to be updated.
 `except*` or raise `ExceptionGroup`s.
 
 
-## Security Implications
-
 ## How to Teach This
 
 ## Reference Implementation
@@ -1014,8 +1013,54 @@ specified in the same place where we state `T`.
 * The issue where the `except*` concept was first formalized:
   https://github.com/python/exceptiongroups/issues/4
 
-
 ## References
+
+* Reference implementation:
+
+  Branch: https://github.com/iritkatriel/cpython/tree/exceptionGroup-stage5
+
+  PR:  https://github.com/iritkatriel/cpython/pull/10
+
+* PEP 3134: Exception Chaining and Embedded Tracebacks
+
+  https://www.python.org/dev/peps/pep-3134/
+
+* The `asyncio` standard library
+
+  https://docs.python.org/3/library/asyncio.html
+
+  `asyncio.gather()`:
+  https://docs.python.org/3/library/asyncio-task.html#asyncio.gather
+
+* The Trio Library
+
+  Trio: https://trio.readthedocs.io/en/stable/
+
+  `MultiError`:
+  https://trio.readthedocs.io/en/stable/reference-core.html#trio.MultiError
+
+  `MultiError2` design document: https://github.com/python-trio/trio/issues/611.
+
+* Python issue 29980: OSError: multiple exceptions should preserve the
+  exception type if it is common
+
+  https://bugs.python.org/issue29980
+
+* Python issue 40857: `tempfile.TemporaryDirectory()`` context manager can fail
+  to propagate exceptions generated within its context
+
+  https://bugs.python.org/issue40857
+
+* PyTest issue 8217: Improve reporting when multiple teardowns raise an exception
+
+  https://github.com/pytest-dev/pytest/issues/8217
+
+* The Hypothesis Library
+
+  https://hypothesis.readthedocs.io/en/latest/index.html
+
+  Reporting Multiple Errors:
+  https://hypothesis.readthedocs.io/en/latest/settings.html#hypothesis.settings.report_multiple_bugs
 
 ## Copyright
 
