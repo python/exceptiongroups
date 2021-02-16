@@ -205,9 +205,9 @@ other side:
 
 Since splitting by exception type is a very common use case, `subgroup` and
 `split` can take an exception type or tuple of exception types and treat it
-as a shorthand for matching that type: `eg.split(TypeError)`, is equivalent to
-`eg.split(lambda e: isinstance(e, TypeError))`.
-
+as a shorthand for matching that type: `eg.split(T)` divides `eg` into the
+subgroup of leaf exceptions that match the type `T`, and the subgroup of those
+that do not (using the same check as `except` for a match).
 
 #### The Traceback of an `ExceptionGroup`
 
