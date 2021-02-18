@@ -43,11 +43,16 @@ unwinds. Several real world use cases are listed below.
   issue how to aggregate these errors, particularly when they are different
   [[Python issue 29980](https://bugs.python.org/issue29980)].
 
-* **Multiple user callbacks fail.** The pytest library allows users to register
-  finalizers which are executed at teardown. If more than one of these
-  finalizers raises an exception, only the first is reported to the user. This
-  can be improved with `ExceptionGroup`s, as explained in this issue by pytest
-  developer Ran Benita [[Pytest issue 8217](https://github.com/pytest-dev/pytest/issues/8217)]
+* **Multiple user callbacks fail.** Python's `atexit.register()` allows users
+  to register functions that are called on system exit. If any of them raise
+  exceptions, only the last one is reraised, but it would be better to reraised
+  all of them together
+  [[`atexit` documentation](https://docs.python.org/3/library/atexit.html#atexit.register)].
+  Similarly, the pytest library allows users to register finalizers which
+  are executed at teardown. If more than one of these finalizers raises an
+  exception, only the first is reported to the user. This can be improved with
+  `ExceptionGroup`s, as explained in this issue by pytest developer Ran Benita
+  [[Pytest issue 8217](https://github.com/pytest-dev/pytest/issues/8217)]
 
 * **Multiple errors in a complex calculation.** The Hypothesis library performs
   automatic bug reduction (simplifying code that demonstrates a bug). In the
@@ -1050,6 +1055,10 @@ specified in the same place where we state `T`.
   to propagate exceptions generated within its context
 
   https://bugs.python.org/issue40857
+
+* `atexit` documentation:
+
+  https://docs.python.org/3/library/atexit.html#atexit.register
 
 * PyTest issue 8217: Improve reporting when multiple teardowns raise an exception
 
