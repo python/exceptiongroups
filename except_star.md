@@ -1,6 +1,5 @@
 
-# except*
-
+# Exception Groups and except*
 
 ## Abstract
 
@@ -859,6 +858,11 @@ to be updated.
 
 
 ## How to Teach This
+
+`ExceptionGroup`s and `except*` will be documented as part of the language
+standard. Libraries that raise `ExceptionGroup`s such as `asyncio` will need to
+specify this in their documentation and clarify which API calls need to be
+wrapped with `try-except*` rather than `try-except`.
 
 ## Reference Implementation
 
